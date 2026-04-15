@@ -1,0 +1,1474 @@
+ PROCESADORES DEL LENGUAJE
+
+
+
+
+PRÁCTICA | LAVA
+   Analizador del lenguaje
+
+
+
+
+         Curso 2025-26
+
+     Campus de Colmenarejo
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+
+   Tabla de contenidos
+
+   Introducción..................................................................................................................................................................... 3
+   Objetivos...........................................................................................................................................................................3
+   Especificación del lenguaje.........................................................................................................................................4
+         Comentarios............................................................................................................................................................. 5
+         Palabras reservadas.............................................................................................................................................. 5
+         Variables y tipos......................................................................................................................................................5
+                Número entero................................................................................................................................................................... 5
+                Número real........................................................................................................................................................................ 6
+                Carácter................................................................................................................................................................................ 6
+                Booleano..............................................................................................................................................................................6
+         Operaciones............................................................................................................................................................. 6
+                Aritméticas.......................................................................................................................................................................... 6
+                Booleanas............................................................................................................................................................................6
+                Comparativas......................................................................................................................................................................6
+         Reglas de precedencia..........................................................................................................................................6
+         Variables de tipo registro.....................................................................................................................................7
+         Control de flujo........................................................................................................................................................9
+                Salto condicional............................................................................................................................................................... 9
+                Bucle condicional.............................................................................................................................................................. 9
+         Funciones................................................................................................................................................................10
+         Estructura del programa....................................................................................................................................12
+         Sentencias.............................................................................................................................................................. 12
+         Controles semánticos......................................................................................................................................... 14
+                Reglas de tipos................................................................................................................................................................14
+                Conversiones automáticas...........................................................................................................................................14
+                Tipos y expresiones....................................................................................................................................................... 15
+                Invocación de funciones............................................................................................................................................... 16
+         Generación de código intermedio...................................................................................................................18
+         Recuperación de errores....................................................................................................................................20
+   Entregas......................................................................................................................................................................... 21
+         Analizador léxico - P1........................................................................................................................................ 21
+         Analizador sintáctico - P2................................................................................................................................. 22
+         Análisis semántico y partes opcionales - P3..............................................................................................24
+
+
+
+
+                                                                                                                                                                                                       2
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Introducción
+   La práctica de la asignatura de Procesadores del Lenguaje consistirá en la implementación de un
+   compilador capaz de analizar programas de un lenguaje denominado Lava, que contiene expresiones
+   aritmético-lógicas, registros, funciones y estructuras de control. También será capaz de comprobar la
+   corrección en términos de los tipos de datos utilizados.
+
+   La práctica se desarrollará junto con los contenidos teóricos sobre los fundamentos del análisis léxico,
+   sintáctico y semántico. Se espera que el alumno conozca la implementación completa de un analizador en
+   sus fases y use estos conocimientos para detectar errores en el uso de tipos e informar al programador que
+   usará el lenguaje Lava.
+
+
+
+   Objetivos
+   La práctica se divide en las siguientes partes o bloques de contenidos a realizar:
+
+       1.​   P1      Generación del analizador léxico o lexer
+                  1.​ Capaz de reconocer los elementos del lenguaje a nivel léxico.
+                  2.​ Implementación a código utilizando ply.lex
+
+       2.​   P2      Generación del analizador sintáctico o parser
+                  1.​ Diseño de la gramática, incluyendo símbolos terminales (tokens generados por el lexer),
+                      símbolos no terminales y reglas de producción, capaz de reconocer el lenguaje especificado.
+                  2.​ Implementación a código utilizando ply.yacc
+
+       3.​   P3      Ampliación del parser para completar el análisis semántico
+                  1.​ Registrar y tratar variables declaradas por el programador, almacenando el tipo con el que
+                      se declaran.
+                          1.​ Se deberá crear una estructura de tipo tabla para almacenar los símbolos (variables
+                              de tipo básico/nativo)
+                          2.​ Se deberá crear una estructura de tipo tabla para almacenar los registros (variables
+                              de tipo complejo/registros)
+                  2.​ Comprobaciones semánticas de todas las expresiones del programa, incluyendo la
+                      inicialización de variables, las expresiones asignadas a variables, operadores aplicados y
+                      condiciones de los controles de flujo.
+                          1.​ Se harán las comprobaciones de tipos y operaciones válidas para distinguir los
+                              diferentes tipos del lenguaje incluyendo, cuando sea necesaria, la conversión de
+                              tipos compatibles.
+                  3.​ Implementación a código utilizando ply.yacc
+
+       4.​   P3 - OPCIONAL           Para poder obtener la calificación máxima, pero de manera opcional, se
+             deberá elegir y desarrollar uno de los siguientes apartados (consultar la teoría para más detalle):
+                  1.​ Generación de código intermedio.
+                  2.​ Recuperación de errores.
+
+
+
+
+                                                                                                                   3
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Especificación del lenguaje
+   Lava es un pequeño lenguaje de programación imperativo y fuertemente tipado.
+
+       ●​ El lenguaje trabaja con varios tipos de datos básicos.
+       ●​ También permite definir tipos compuestos o registros.
+       ●​ Las estructuras de control de flujo básicas que contiene son el salto y el bucle condicional.
+       ●​ Permite la declaración y llamada de funciones.
+
+
+
+
+       Java
+       record Vector(float x, float y);
+       record Planet(Vector position, Vector velocity, float mass, boolean active);
+
+
+       // Actualiza la posición utilizando la velocidad
+       void move(Planet p) {
+           p.position.x = p.position.x + p.velocity.x;
+           p.position.y = p.position.y + p.velocity.y;
+       }
+
+
+       /*
+           Computa la energía cinética
+           i.e. ½ * m * v²
+       */
+       float energy(Planet p) {
+           float squareSpeed = p.velocity.x * p.velocity.x + p.velocity.y * p.velocity.y;
+           return 0.5 * p.mass * squareSpeed;
+       }
+
+
+       Planet earth = new Planet(new Vector(0, 0), new Vector(1, 2), 5, true);
+
+
+       // Simula 3 etapas
+       int step = 0;
+       while (step < 3) {
+           if (!earth.active) {
+               move(earth);
+           }
+           step = step + 1;
+       }
+
+
+       // ¿Es la energía suficiente?
+       if (energy(earth) > 10.0) {
+           print('Y');
+       } else {
+           print('N');
+       }
+
+
+
+
+                                                                                                          4
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Comentarios
+   Se permiten comentarios, en cualquier parte del código, que deben ser tratados - e ignorados - por
+   completo en el analizador léxico. Los tipos de comentarios son:
+       ●​ De una línea: Comienzan por // y terminan con un salto de línea.
+       ●​ Multi-línea: Comienzan por /* y terminan con */. El contenido puede contener cualquier carácter,
+           incluyendo el salto de línea.
+
+
+   Palabras reservadas
+   Las palabras reservadas del lenguaje tienen una condición especial y, por tanto, no pueden usarse como
+   nombres de variables. Solo pueden usarse en minúsculas y son:
+
+
+    true                          false                     int                      float
+
+    char                          boolean                   void                     return
+
+    if                            else                      do                       while
+
+    break                         print                     new                      record
+
+
+   Variables y tipos
+   Todas las variables deberán ser tipadas en su declaración. A continuación, se detallan los tipos básicos que
+   se manejan en Lava
+
+
+    Variable                Número entero      Número real            Carácter            Booleano
+
+    Tipo                    int                float                  char                boolean
+
+
+   Número entero
+   Declaración decimal; los caracteres posibles son [0-9]
+       ●​ No se permiten ceros no significativos (por la izquierda)
+       ●​ int decimal = 495;
+
+
+   La representación binaria comienza con 0b; los caracteres posibles son [0-1]
+       ●​ int binary = 0b111101111;
+
+
+   La declaración octal comienza con 0; los caracteres posibles son [0-7]
+       ●​ int octal = 0757;
+
+
+   La declaración hexadecimal comienza con 0x; los caracteres posibles son [0-9A-F]
+       ●​ int hexadecimal = 0x1EF;
+
+
+
+
+                                                                                                              5
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Número real
+   Notación con punto decimal: se requiere parte entera, parte decimal y usa (.) como separador decimal
+       ●​ float dot_notation = 100.001;
+
+
+   Notación científica (exponencial): utiliza e como separador de potencia de 10, positiva o negativa. La
+   potencia deberá ser un número entero, pero el número base podrá ser tanto entero como decimal.
+       ●​ float scientific = 9.87e-2; // ~0.0987
+       ●​ float scientific_pos = 5e5; // ~500000.0
+
+
+   Carácter
+   Cualquier símbolo de la codificación ASCII-extendido, delimitado por comillas simples (’’)
+       ●​ char letter = ‘a’;
+       ●​ char symbol = ‘¿’;
+
+
+   Booleano
+   Representan valores lógicos utilizando las palabras reservadas true y false
+       ●​ boolean active = true;
+
+
+   Operaciones
+
+   Aritméticas
+   Binarias en notación infija (+, -, *, /) y unarias (+, -)
+       ●​ int suma = 10 + 5; // suma binaria
+       ●​ float negación = -suma; // cambio de signo unario
+
+
+   Booleanas
+   Lógicas binarias de conjunción (&&) y disyunción (||) y unaria de negación (!)
+       ●​ boolean and = true && false;
+       ●​ boolean not = !true;
+
+
+   Comparativas
+   Evalúan relación entre valores y devuelven un booleano (>, >=, <, <=, ==)
+       ●​ boolean equal = 5 == 5
+       ●​ boolean greater = 10.3 > 200e-1
+
+
+   Reglas de precedencia
+   Para la correcta interpretación de las expresiones que contienen múltiples operadores de diferente o igual
+   tipo (aritméticas, booleanas y comparativas), se deben establecer reglas claras de precedencia y
+   asociatividad.
+
+
+
+
+                                                                                                                6
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   En lugar de construir una gramática sintáctica donde la precedencia se codifique explícitamente a través de
+   múltiples niveles de reglas de producción, se utilizará la funcionalidad precedence proporcionada por la
+   librería PLY.
+   ​
+   Esta herramienta simplifica significativamente el diseño del parser al permitir definir la precedencia y la
+   asociatividad de los símbolos terminales (operadores) de manera declarativa. Se requiere que se
+   establezcan:
+       1.​ Niveles de precedencia: El orden jerárquico en el que se deben evaluar los operadores (p. ej., la
+           multiplicación tiene mayor precedencia que la suma).
+       2.​ Asociatividad: La dirección de evaluación para operadores del mismo nivel de precedencia
+           (izquierda, derecha o no asociativa).
+
+
+   El conjunto de reglas de precedencia y asociatividad deberá abarcar todos los operadores del lenguaje
+   Lava. Se sugiere seguir el estándar de precedencia de operadores de lenguajes como Java por su amplia
+   adopción. Sin embargo, cualquier otro enfoque o variación es aceptable, siempre que la elección y el
+   razonamiento detrás de los niveles de precedencia y asociatividad seleccionados se documenten y
+   justifiquen detalladamente en la memoria técnica de la entrega.
+
+
+   Nota: Es crucial que los paréntesis mantengan el nivel más alto de precedencia, asegurando que las
+   sub-expresiones encerradas se evalúen antes que las externas.
+
+
+   Variables de tipo registro
+   La especificación actual del lenguaje Lava define los registros como estructuras de datos compactas que
+   integran tanto la definición del tipo como su inicialización.
+
+
+       Java
+       /* Definición del registro (tipo) - record Nombre(tipo prop1, tipo prop2, ...)
+       Define la estructura de datos de forma inmutable y compacta. */
+       record Circle(float cx, float cy, float radius, char color);
+       record Square(float side, char color);
+
+
+       /* Instanciación: Se usa la palabra reservada 'new' para crear el objeto.
+       No se permite la declaración sin asignación inmediata en este formato */
+       Circle c = new Circle(0, 0, 10.2, 'R');
+       Square s = new Square(3.1e2, 'B');
+
+
+       // Acceso a propiedades
+       // Se utiliza el operador punto (.) para obtener los valores.
+       int circleArea = 3.1416 * c.radius * c.radius;
+       int squareArea = s.side * s.side;
+
+
+       // Operación de comparación: devuelve un booleano tras evaluar áreas.
+       boolean squareIsBigger = squareArea > circleArea;
+
+
+
+
+                                                                                                                 7
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Un registro se declara mediante la palabra reservada record, seguida de un identificador y una lista de
+   parámetros tipados entre paréntesis que establecen sus propiedades inmutables.
+
+
+   Para crear una instancia, se utiliza el operador new pasando los argumentos correspondientes al
+   constructor, mientras que el acceso a los datos se realiza de forma directa mediante la notación de punto -
+   (objeto.propiedad)
+
+
+   Esta sintaxis permite integrar los registros de manera fluida en expresiones aritméticas y lógicas, facilitando
+   el manejo de datos compuestos con una tipificación clara y estricta.
+
+
+   Componentes de la especificación
+       ●​ Definición del tipo: La cabecera record Nombre(campos) actúa como el esquema estructural.
+       ●​ Instanciación Obligatoria: La creación de la variable requiere el uso de new para asegurar que todas
+           las propiedades tengan un valor desde el nacimiento del objeto. El acceso a propiedades antes de
+           la instanciación no está permitido.
+       ●​ Acceso Directo: El operador punto permite recuperar valores para ser usados como operandos en
+           cálculos (ej. c.radius) o cualquier otro tipo de operación.
+       ●​ Posibles tipos de los campos: Un campo de un registro podrá tener cualquier tipo básico o bien el
+           de otro registro previamente definido.
+
+
+
+
+       Java
+       record Location(char city, char country);
+       record Price(float euro, float dollar, float yen);
+
+
+       // Registro con campos que a su vez son de tipo registro
+       record House(Location location, Price price);
+
+
+       // Instanciación anidada
+       House myHouse = new House(
+         new Location('M', 'E'),
+         new Price(100e100, 108e100, 16397e100));
+
+
+       float withTax = myHouse.price.euro * 1.1;
+       float euroToYen = myHouse.price.euro * 163.97;
+
+
+       // Llamada a la función de sistema 'print' para mostrar por consola
+       print(euroToYen == myHouse.price.yen);
+
+
+
+
+                                                                                                                 8
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Control de flujo
+   En cuanto al control de flujo, se definen dos estructuras de control: salto y bucle condicional.
+
+
+   Salto condicional
+   La especificación del lenguaje para el salto condicional se basa en una estructura de control de flujo que
+   evalúa la veracidad de una condición lógica para ramificar la ejecución del programa.
+       ●​ Bajo esta sintaxis, la palabra reservada if precede obligatoriamente a una expresión booleana
+            encerrada entre paréntesis; si dicha expresión resulta verdadera, se acabaría ejecutando el bloque
+            de sentencias delimitado por llaves ({}).
+       ●​ En caso de que la condición sea falsa y exista una cláusula opcional else, el programa desviaría su
+            flujo hacia el segundo bloque de sentencias delimitado, de nuevo, por llaves ({}).
+
+
+   Esta estructura permite integrar dentro de la condición una lógica compleja que combina operaciones
+   aritméticas, relacionales y booleanas, garantizando que solo una de las dos rutas de ejecución sea
+   procesada antes de reincorporarse a la secuencia normal del programa.
+
+
+       Java
+       if (f2 == 3 || b1 && b2 || 10 - 4 * i1 >= 0xFF - 1e-1) {
+           f2 = f2 - 3;​
+       } else {
+           f2 = 10 - f1 * f1;
+       }
+
+
+
+
+   Bucle condicional
+   La especificación del lenguaje para el bucle condicional define una estructura de control iterativa que
+   permite la ejecución repetida de un bloque de código mientras una condición booleana sea verdadera.
+       ●​ La sentencia se inicia con la palabra reservada while, seguida de una expresión lógica entre
+            paréntesis que se evalúa antes de cada iteración.
+       ●​ Si el resultado es true, se ejecuta el cuerpo del bucle delimitado por llaves ({}).
+
+
+   También existe la variante do while, que permite al desarrollador definir una estructura de control
+   iterativa que se ejecuta al menos una vez, incluso cuando la condición booleana no sea verdadera de inicio.
+
+
+       Java
+       int i = 0;
+
+
+       do {
+           i = i + 1;
+           print(i);
+       } while (i < 10);
+
+
+
+
+                                                                                                                 9
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+
+   Dentro de esta estructura, el lenguaje permite la alteración del flujo mediante la palabra reservada break,
+   la cual provoca la salida inmediata del bucle, transfiriendo el control a la primera sentencia posterior al
+   bloque del while.
+       ●​ break puede aparecer en cualquier parte del bloque del bucle condicional.
+       ●​ break no puede aparecer en el ámbito global ni en ningún otro tipo de bloque.
+
+
+   Esta combinación permite gestionar tanto bucles controlados por una condición de entrada como
+   terminaciones abruptas basadas en estados internos, garantizando flexibilidad en el procesamiento
+   secuencial y la manipulación de variables de control o contadores.
+
+
+       Java
+       int i;
+       int v;
+
+
+       while (i < 4) {
+           if (v >= 10) {
+               break;
+           }
+
+
+           v = (v + 1) * 2;
+           i = i + 1;
+
+
+           print(v);
+       }
+
+
+
+
+   Funciones
+   La especificación actual del lenguaje para la definición de subrutinas o funciones adopta una sintaxis
+   modular y estructurada.
+       ●​ Una función se define especificando primero el tipo de dato que devuelve (puede ser void),
+               seguido de su identificador y una lista de parámetros tipados entre paréntesis (puede ser vacía).
+       ●​ El cuerpo de la función (conjunto de sentencias) se delimita obligatoriamente por llaves ({}) y debe
+               contener al menos una sentencia de retorno mediante la palabra reservada return (excepto si el
+               tipo de dato que devuelve es void, donde estaría prohibido incluirla)
+                   ○​ La sentencia de retorno es única y aparece al final del cuerpo de la función. Se tendrá en
+                       cuenta si se permiten múltiples sentencias que pueden aparecer en cualquier parte del
+                       mismo.
+
+
+   El lenguaje soporta la sobrecarga de funciones, lo que permite definir múltiples funciones con el mismo
+   nombre siempre que su firma (número o tipo de argumentos) sea distinta.
+
+
+
+
+                                                                                                                   10
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Al invocar una función, las expresiones pasadas como argumentos se evalúan y se asignan a los
+   parámetros correspondientes, ejecutando el bloque de sentencias hasta alcanzar el valor de retorno, el cual
+   puede ser integrado directamente en expresiones más complejas.
+
+   Este ejemplo muestra una función que calcula el promedio de dos números reales.
+
+
+       Java
+       float calcularPromedio(float a, float b) {
+              float suma = a + b;
+              return suma / 2;
+       }
+
+
+       // Llamada a la función
+       float resultado = calcularPromedio(10.5, 5.5);
+
+
+
+
+   En este segundo caso, se utilizan registros o tipos complejos como parámetros de entrada de la función.
+
+
+       Java
+       record Point(int x, int y);
+       record Line(Point a, Point b);
+
+
+       Line lineFromCoordinates(int x1, int y1, int x2, int y2) {
+           return new Line(new Point(x1, y1), new Point(x2, y2));
+       }
+
+
+       Line l = lineFromCoordinates(0, 0, 4, 2);
+
+
+
+
+   Por último, un ejemplo de función con retorno tipo void.
+
+
+       Java
+       record Ship(int id, float capacity, float currentLoad);
+
+
+       void debugShipDetails(Ship ship) {
+           print(ship.id);
+           print(ship.currentLoad / ship.capacity * 100);
+       }
+
+
+       Ship ship1 = new Ship(1, 100, 23.2);
+       debugShipDetails(ship1);
+
+
+
+
+                                                                                                             11
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Estructura del programa
+   Hay que tener en cuenta un serie de casos límite que deberán ser permitidos:
+       3.​ Un fichero vacío es válido.
+       4.​ Un fichero con solo saltos de línea es válido.
+       5.​ Un fichero con solo delimitadores (;) es válido.
+       6.​ Las sentencias pueden estar separadas por uno o muchos delimitadores (;)
+       7.​ Las declaraciones de funciones no llevan delimitador al final (;) ya que usan llaves ({})
+       8.​ Un programa es un conjunto de sentencias y/o declaraciones de funciones.
+
+
+       Java
+       ;;​
+       ;​
+       int test = -0b1;;;       ; ;
+
+
+       boolean check() { return true; }
+       ;
+       ;;;;;
+
+
+
+
+   Sentencias
+       1.​ Evaluación de expresiones, de cualquier tipo o combinación válida de operaciones aritméticas,
+             booleanas o de comparación.
+       2.​ Declaración/Asignación de variables de los diferentes tipos.
+
+
+   Las expresiones pueden ser literales, operaciones, llamadas a funciones, accesos a propiedades de
+   registros, etc. es decir, todo aquello que represente un valor.
+
+
+   Las declaraciones comienzan por el tipo de variable seguido del nombre de la variable. Las asignaciones
+   comienzan por un nombre de variable, seguido del signo igual y terminan con una expresión.
+
+
+   No se permite la asignación de valores en mitad de una expresión: serán incorrectas las sentencias de tipo:
+
+
+       Java
+       A +    4 * B = 3 - 7; // Error: asignación (B=3) en una expresión
+
+
+
+
+   Las variables pueden asignarse en el momento de la declaración. En caso de realizar la declaración y
+   asignación por separado, la variable debe declararse antes de asignarse.
+
+
+
+
+                                                                                                             12
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   El lenguaje permite declarar (pero no declarar y asignar) una lista de variables separadas por comas,
+   indicando que todas comparten el mismo tipo.
+
+
+       Java
+       int a, b;
+       a = 10;
+       b = a * a - a;
+       c = '$'; // Error semántico:
+       ​          // La variable 'c' no ha sido declarada anteriormente
+
+
+       float d, e = 0xFF / 0702; // Error sintáctico:
+                                       // No se permite la multideclaración con asignación
+
+
+
+
+   No se permiten las re-declaraciones: cuando se declara una variable, no se podrá volver a declarar ninguna
+   otra variable con el mismo nombre. Lo que sí estará permitido será la reasignación de valores a las
+   variables, siempre y cuando sean del mismo tipo.
+
+
+       Java
+       float var1, VAR1, Var1;
+       float var1; // Error semántico:
+       ​             // La variable 'var1' ya ha sido declarada anteriormente
+
+
+       VAR1 = 10; // OK: VAR1=(int, 10)
+       VAR1 = false; // Error semántico: 'VAR1' es tipo 'int', no 'boolean'
+
+
+
+
+   Cuando una variable es declarada sin asignarle un valor inicial, se le asignará el valor por defecto,
+   dependiendo del tipo de la variable. Las variables de tipo registro, cuando se declaren sin asignársele un
+   valor inicial, se le asignará a cada una de sus propiedades el valor por defecto, dependiendo del tipo de
+   variable.
+
+
+       Java
+       int i; // i = 0
+       float f; // f = 0.0
+       char c; // c = '' - caracter vacío, 0
+       boolean b; // b = false
+
+
+       record Point(int x, int y);
+       Point p; // p.x = 0, p.y = 0
+
+
+       record Line(Point p1, Point p2);
+       Line l; // l.p1.x = 0, l.p1.y = 0, l.p1.x = 0, l.p2.y = 0
+
+
+
+
+                                                                                                                13
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Controles semánticos
+
+   Reglas de tipos
+       1.​ Movimiento de datos, donde se utiliza un dato previamente definido, hay que comprobar si está
+            permitido usarlo en ese punto del programa.
+       2.​ Combinación de datos, donde varios datos son combinados para producir un resultado.
+
+
+   Ambos niveles están relacionados: a veces es necesario resolver una operación de combinación de datos
+   para saber si el tipo de dato que se va a producir es válido para una aplicación posterior.
+
+
+       Java
+       int a = 10;
+       float b = 12.12;
+
+
+       if (a) { ... } // movimiento: ¿se puede utilizar 'a' de tipo 'int' como condición?
+       float c = a + b + 'c' // combinación: ¿es posible combinar diferentes tipos?
+
+
+   Todas las operaciones que combinan/manejan dos o más valores deben asegurar que sus tipos son
+   similares, o al menos que se puede realizar la conversión de uno de ellos al tipo del otro sin pérdida de
+   datos.
+
+
+   Conversiones automáticas
+   Para ambas categorías, debemos asegurarnos que el tipo de origen y el de destino son iguales, o bien que
+   se puede realizar una conversión del tipo de origen al tipo de destino sin pérdida de datos.
+
+
+    Origen             Destino           Transformación
+
+    char              int               Se toma el valor numérico del carácter (0-255)
+
+                                        Pasar de 32 bits que representan un entero en CA2 a 32 bits que
+    int               float
+                                        representan un real en IEEE754
+
+
+
+   El dato con el tipo más restrictivo se transforma al tipo más general, siempre y cuando sea posible (tanto en
+   operaciones binarias, como en asignación, como en llamadas a funciones, etc.)
+       1.​ char puede convertirse a int o float
+       2.​ int puede convertirse a float
+       3.​ boolean no puede convertirse a ningún otro tipo
+
+
+   float f1;
+   f1 = 7.5; // OK: float -> float
+   f1 = 0b11; // OK: int -> float
+   f1 = true; // ERROR: boolean -> float
+
+
+
+
+                                                                                                               14
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Tipos y expresiones
+   Respecto a las operaciones y expresiones, cada operador requiere uno o varios tipos de datos concretos en
+   la entrada, y devuelve así mismo un tipo específico de dato en la salida. En la siguiente tabla se especifican
+   los tipos de datos compatibles con cada operador (sin tener en cuenta conversiones automáticas) y la salida
+   correspondiente para cada tipo de entrada.
+
+
+    Operador                             Tipo de origen                       Tipo de salida
+
+    MÁS +                                int                                  int
+    MENOS -
+                                         float                                float
+
+                                         char                                 char
+
+
+    POR * , ENTRE /                      int                                  int
+
+                                         float                                float
+
+
+    MAYOR >, MENOR <, MAYOR O            int                                  int
+    IGUAL >=, MENOR O IGUAL <=
+                                         float                                float
+
+                                         char                                 char
+
+
+    IGUAL ==                             int                                  boolean
+
+                                         float                                boolean
+
+                                         char                                 boolean
+
+                                         boolean                              boolean
+
+
+    Y &&, O ||, NO !                     boolean                              boolean
+
+
+
+   Este fragmento de código captura algunos ejemplos de todas las reglas de tipado comentadas previamente.
+
+
+       Java
+       char c = 'c' + 'c';​​            // OK: char + char -> char
+       int i = 1 + c;​          ​       // OK: int + char -> int
+
+
+       /* ERROR: 1) 'd' < 8 -> char (to_int) < int -> boolean
+                   2) 5.0 * (1) -> float * boolean -> TYPE ERROR */
+       float err = 5.0 * ('d' < 8);
+
+
+       /* OK: 1) 'c' * 8 -> char (to_int) * int -> int
+               2) 7.5 + (1) -> float + int (to_float) -> float */
+       float ok = 7.5 `'c' * 8;
+
+
+       // ERROR: "if" requiere 'boolean', 'float' no se puede convertir a 'boolean'
+       if (5/7) { err = 0.0; }
+
+
+
+
+                                                                                                               15
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Invocación de funciones
+   Las funciones en Lava son símbolos locales y persistentes:
+       ●​ Una función declarada legalmente puede ser usada en cualquier parte de un programa después de
+               su declaración, pero no antes. Esto incluye la prohibición de ser usadas en su propio cuerpo de la
+               función, imposibilitando la recursión directa en este lenguaje.
+       ●​ Una vez una función es declarada, permanece disponible durante la vida completa del programa.
+               No existen situaciones en las que la función deje de existir o no esté disponible.
+
+
+
+
+       Java
+       suma(1, 2); // ERROR: La función 'suma' no existe
+
+
+       int suma(int a, int b) {
+           return a + b;
+       }
+
+
+       suma(1, 2); // OK: La función 'suma' existe
+
+
+       int fibonacci(int n) {
+           if (n < 0 || !(n % 1 == 0)) {
+               return -1
+           }
+           if (n == 0 || n == 1) {
+               return n;
+           }
+
+
+           // ERROR: No se permite la recursividad interna, 'fibonacci' no existe
+           return fibonacci(n - 1) + fibonacci(n - 2);
+       }
+
+
+
+
+   Sobre sus reglas concretas de declaración, es importante notar que Lava admite sobrecarga de funciones
+   por cambio de parámetros.
+       ●​ Es legal que existan dos funciones con el mismo nombre, siempre que su lista de parámetros varíe
+               en número y/o tipo.
+       ●​ No es legal que existan dos funciones con el mismo nombre y lista de parámetros, pero diferente
+               tipo de retorno.
+
+
+   Al igual que ocurre con las variables, los nombres de las funciones son sensibles a mayúsculas. Esto quiere
+   decir que será legal declarar foo, Foo, FOO… puesto que sus nombres no son equivalentes.
+
+
+
+
+                                                                                                                    16
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   La sobrecarga de funciones hace que a veces pueda ser complicado saber qué función de las declaradas se
+   va a corresponder con una determinada sentencia de uso. Supongamos que tenemos un fichero con las
+   siguientes funciones declaradas:
+
+
+
+
+       Java
+       float foo(int a, float b) { return 0.0; }​              // 1
+       float foo(int a) { return 0.0; }​ ​             ​       // 2
+       float foo(int a, int b) { return 0.0; }​​               // 3
+       float foo(int a, boolean b) { return 0.0; }​            // 4
+       float foo(float a) { return 0.0; }​             ​       // 5
+
+
+
+
+   Y donde tenemos las siguientes funciones de uso:
+
+
+
+
+       Java
+       foo(5, 4.3); ​​         // compatible con 1 (sin conflicto)
+       foo(3.0); ​     ​       // compatible con 5 (sin conflicto)
+       foo('d'); ​     ​       // compatible con 2 (sin conflicto; char -> int)
+       foo(4); ​       ​       // compatible con 2 y 5 (int -> int or float)
+       foo(5, 4); ​ ​          // compatible con 1 y 3 (int, int -> int or float)
+
+
+
+
+   En los tres primeros casos, vemos que no hay conflicto, puesto que sólo existe una función con ese nombre
+   y una lista de parámetros compatible (donde el tipo de cada parámetro cuadra con el de la declaración, o
+   donde el tipo de dato en la sentencia de uso puede convertirse directamente al de la sentencia de
+   declaración).
+
+
+   Tendrá prioridad la llamada que no requiere ninguna conversión automática de tipos, de manera que
+   solamente cuando la invocación no sea compatible con ninguna función con los mismos tipos de los
+   argumentos, se intentará la conversión para otras funciones con tipos resultado de la conversión.
+
+
+
+
+                                                                                                              17
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Diseño avanzado
+   Generación de código intermedio
+   Consultar teoría (Tema 7 - Generación de código intermedio)
+
+   Como se indicaba anteriormente, la generación de código intermedio se realizará mediante cuartetos
+   (código de 3 direcciones) con el juego de instrucciones que se muestra en la tabla a continuación.
+
+
+   ❗No se pide la generación de código intermedio para operaciones con registros (instanciación, acceso a
+   propiedades ni asignación a propiedades) ni con funciones (definición, llamada, paso de parámetros…)
+
+
+    Instrucciones               Arg 1      Arg 2        Resultado    Descripción
+
+    ADD, SUB, MUL, DIV,
+    GT, GTE, LT, LTE,           Valor      Valor        Referencia   Operaciones binarias.
+    EQ, NEQ, AND, OR
+
+    UMINUS, UPLUS, NOT,
+    CHAR_TO_INT,                Valor      (vacío)      Referencia   Operaciones unarias y casting
+    INT_TO_FLOAT
+
+                                                                     Guarda el valor de la derecha en la variable de
+    ASSIGN                      Valor      (vacío)      Variable
+                                                                     la izquierda.
+
+                                                                     Salto condicional: salta a la etiqueta si el valor
+    JUMPT, JUMPF                Valor      Etiqueta     (vacío)
+                                                                     es Verdadero (T) o Falso (F).
+
+                                                                     Salto incondicional a una etiqueta o llamada a
+    JUMP, CALL                  Etiqueta   (vacío)      (vacío)
+                                                                     una función.
+
+                                                                     Define un punto en el código al que se puede
+    LABEL                       Etiqueta   (vacío)      (vacío)
+                                                                     saltar.
+
+    PRINT                       Valor      (vacío)      (vacío)      Llamada al sistema para imprimir por consola.
+
+
+   Siguiendo esta leyenda:
+       ●​ Valor: Puede ser un número (literal), un carácter o el contenido de una variable.
+       ●​ Variable: El nombre de una variable definida por el programador.
+       ●​ Temporal: Un espacio de memoria que crea el compilador para resultados intermedios).
+       ●​ Etiqueta: Un nombre que marca una línea de código específica para poder saltar a ella.
+       ●​ Referencia: Cualquiera de los tres anteriores (Variable, Temporal o Etiqueta).
+
+
+   Se generará un fichero con el mismo nombre que el fichero de entrada pero con extensión .quartets
+       ●​ Cada línea del fichero contendrá un cuarteto con la forma operador,arg1,arg2,result
+       ●​ Cuando un operador no requiere un argumento o un resultado, se utilizará la barra baja _
+       ●​ Los temporales y etiquetas utilizaran el sufijo @ para no chocar nunca con el nombre de las
+            variables definidas por el desarrollador.
+
+
+
+                                                                                                                          18
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   A continuación, se indican varios ejemplos, con pequeños programas que contienen expresiones aritméticas,
+   lógicas y de control de flujo.
+
+
+                                                           None
+                                                           MUL,5,4,@T1
+       Java
+                                                           DIV,80,10,@T2
+       float f1, f2;
+                                                           SUB,@T1,2,@T3
+       boolean b1;
+                                                           ASSIGN,@T3,_,f1
+                                                           DIV,10,5,@T4
+       f1 = 5 * 4 - 80 / 10;
+                                                           MUL,@T4,f1,@T5
+       f2 = 10 / 5 * f1;
+                                                           ASSIGN,@T5,_,f2
+       b1 = 5 < 3;
+                                                           LT,5,3,@T6
+                                                           ASSIGN,@T6,_,b1
+
+
+
+
+                                                           None
+       Java
+                                                           ASSIGN,0,_,num
+       int num;
+                                                           GTE,num,0,@T1
+       boolean isPositive;
+                                                           JUMPF,@T1,@L1,_
+       if (num >= 0) {                                     ASSIGN,true,_,isPositive
+         isPositive = true;                                JUMP,@L2,_,_
+       } else {                                            LABEL,@L1,_,_
+         isPositive = false;                               ASSIGN,false,_,isPositive
+       }
+                                                           LABEL,@L2,_,_
+
+
+
+
+                                                           None
+                                                           ASSIGN,0,_,counter
+       Java                                                ASSIGN,0.0,_,result
+                                                           LABEL,@L1,_,_
+       int counter;
+                                                           LT,counter,5,@T1
+       float result;
+                                                           JUMPF,@T1,@L2,_
+                                                           ADD,counter,1,@T2
+       while (counter < 5) {
+                                                           ASSIGN,@T2,_,counter
+         counter = counter + 1;
+                                                           INT_TO_FLOAT,counter,_,@T3
+         result = counter;
+                                                           ASSIGN,@T3,_,result
+         result = -result;
+                                                           UMINUS,result,_,@T4
+       }
+                                                           ASSIGN,@T4,_,result
+                                                           JUMP,@L1,_,_
+                                                           LABEL,@L2,_,_
+
+
+
+
+                                                                                                         19
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Recuperación de errores
+   Consultar teoría (Tema 4 – Recuperación de errores)
+
+   La recuperación de errores es un componente crucial en el diseño de un procesador de lenguaje, cuyo
+   propósito principal es garantizar la robustez y la usabilidad del compilador o intérprete. Este mecanismo se
+   enfoca en dos objetivos fundamentales durante las diferentes etapas del análisis (léxico, sintáctico y
+   semántico): la información precisa sobre el error y la continuidad del procesamiento.
+
+
+   La función primaria es notificar al desarrollador con la mayor claridad y exactitud posible sobre la
+   naturaleza y ubicación de las anomalías detectadas. Una notificación eficaz debe incluir:
+       ●​ Tipo de error: Clasificación de la infracción (léxico, sintáctico o semántico).
+       ●​ Línea y columna: Localización precisa del punto exacto en el código fuente donde se detecta la
+           incorrección. Esto minimiza el tiempo de depuración.
+
+
+   Tras detectar un error, el sistema de recuperación debe actuar rápidamente para permitir que el análisis del
+   resto del código fuente continúe. Este principio es vital para no detener el procesamiento de un programa
+   por un único error, especialmente en programas extensos.
+
+
+   Los errores se manifiestan en diferentes niveles del proceso de análisis:
+       4.​ Nivel Léxico: Ocurren durante la identificación de tokens o unidades mínimas de significado.
+               a.​ Identificadores mal formados: Uso de caracteres no permitidos al inicio o en medio de un
+                   nombre de variable (e.g., 3variable, mi-variable).
+               b.​ Caracteres no reconocidos: Símbolos que no forman parte del alfabeto del lenguaje.
+       5.​ Nivel Sintáctico: Infracciones relacionadas con la estructura gramatical o el orden de los tokens.
+               a.​ Omisión de terminadores de sentencia: Faltar el punto y coma al final de una sentencia.
+               b.​ Paréntesis desequilibrados: Abrir un bloque o expresión sin cerrarlo correctamente.
+               c.​ Estructuras de control incorrectas: Intentar usar un else sin un if previo.
+       6.​ Nivel Semántico: Errores relacionados con el significado y la coherencia del programa, a menudo
+           vinculados con el sistema de tipos o el alcance de las variables.
+               a.​ Incompatibilidad de tipos: Intentar una operación no válida, como multiplicar una variable
+                   de tipo booleano por una variable de tipo entero .
+               b.​ Uso de variables no declaradas: Referenciar una variable que no ha sido definida en el
+                   ámbito actual.
+               c.​ Argumentos incorrectos en llamadas a funciones: Pasar un número o tipo de parámetros
+                   que no coincide con la definición de la función.
+
+
+
+   Dado que la recuperación de errores implica a menudo heurísticas y estrategias complejas (como el modo
+   pánico, las correcciones locales, o la inserción/eliminación de tokens), es indispensable acompañar el trabajo
+   con una descripción detallada en la memoria del proyecto. Esta descripción debe explicar:
+       ●​ Las técnicas específicas implementadas en cada nivel de análisis (léxico, sintáctico, semántico).
+       ●​ Cómo se gestiona la continuidad del análisis tras un error.
+       ●​ Los criterios utilizados para evitar la redundancia y los falsos positivos en los informes.
+
+
+
+
+                                                                                                                20
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Entregas
+   Este apartado establece las normas generales aplicables a todas las fases del proyecto.
+       1.​ Cada entrega deberá realizarse estrictamente en parejas constituidas de forma permanente, no
+           permitiéndose el cambio de integrantes entre las distintas fases.
+       2.​ El archivo de entrega debe seguir obligatoriamente el formato de nomenclatura detallado a
+           continuación, sustituyendo X por el número de la práctica y los nombres y apellidos por los de los
+           autores.
+               a.​ PX_NOMBRE1_APELLIDO1_NOMBRE2_APELLIDO2.zip
+       3.​ Es fundamental asegurar que el código no genere WARNINGS o ERRORS procedentes de la librería
+           ply; cualquier aviso del sistema deberá ser eliminado o, en casos excepcionales, debidamente
+           justificado en la memoria.
+       4.​ La originalidad es un requisito indispensable: cualquier indicio de plagio o copia entre grupos
+           resultará en el suspenso de la práctica.
+       5.​ Respecto al uso de Inteligencia Artificial, se considera una herramienta de apoyo y no una
+           sustitución del trabajo del alumno; su uso abusivo o el desconocimiento del código generado por
+           esta podrá ser penalizado. El equipo docente se reserva el derecho de convocar defensas orales
+           para verificar la autoría y el conocimiento profundo del material entregado.
+
+
+   Los criterios de evaluación serán:
+       ●​ Funcionalidad: El sistema debe devolver la salida esperada sin errores. Se recomienda adjuntar una
+           batería de pruebas propias para validar el comportamiento.
+       ●​ Dominio de ply: Aplicación correcta de las herramientas trabajadas en los laboratorios y manuales
+           oficiales de la librería.
+       ●​ Memoria técnica: Exposición clara y justificada de las decisiones tomadas. Debe ser un reflejo fiel
+           que guíe al corrector a través del código.
+
+   ⚠️ El incumplimiento del formato de entrega o de los nombres de archivos indicados en cada entrega
+   supondrá una pérdida de puntos automática.
+
+
+   Analizador léxico                   P1
+
+   Para la primera entrega del proyecto, se requiere el desarrollo del analizador léxico utilizando la librería
+   ply.lex. Esta fase inicial debe sentar las bases de la gramática del lenguaje mediante el reconocimiento
+   de los tokens que más tarde serán los símbolos terminales de la misma, por lo que el código entregado
+   debe ser lo más sólido y definitivo posible, permitiendo sólo ajustes menores en entregas posteriores
+   basados en el feedback recibido.
+
+
+   La entrega debe estar compuesta obligatoriamente por dos archivos: lexer.py, que contendrá el
+   analizador léxico, y main.py, que servirá como punto de entrada.
+       ●​ Al ejecutar el comando main.py <file>, el programa debe procesar el archivo de entrada y
+           generar un archivo de salida con el mismo nombre y extensión .token.
+       ●​ El formato de salida debe ser estrictamente de un token por línea, siguiendo la estructura
+               ○​ { TIPO, VALOR, LÍNEA, COLUMNA-INICIO, COLUMNA-FIN }
+
+
+
+                                                                                                                  21
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+
+       Shell
+       // Fichero de entrada - example.lava
+       int a = 28;
+       float b = 24.9;
+
+
+       // Ejecución
+       > python main.py example.lava
+
+
+       // Fichero de salida - example.token
+       // { TIPO, VALOR, LÍNEA, COLUMNA-INICIO, COLUMNA-FIN }
+       INT, int, 1, 0, 3
+       ID, a, 1, 4, 5
+       ASSIGN, =, 1, 6, 7
+       INT_VALUE, 28, 1, 8, 10
+       SEMICOLON, ;, 1, 10, 11
+       FLOAT, float, 2, 0, 5
+       ID, b, 2, 6, 7
+       ASSIGN, =, 2, 8, 9
+       FLOAT_VALUE, 24.9, 2, 10, 14
+       SEMICOLON, ;, 2, 14, 15
+
+
+
+
+   Memoria
+   Junto con el código, se debe adjuntar una memoria detallada, en formato PDF, que documente las
+   decisiones de diseño del analizador, profundizando en el razonamiento y justificación de cada una de ellas.
+       ●​ Elección de tokens: Listado de identificadores, palabras reservadas y símbolos, justificando su
+           clasificación y procesamiento.
+       ●​ Gestión de caracteres: Especificación de los caracteres que se ignoran (como espacios en blanco o
+           tabulaciones) y la lógica para el rastreo de líneas y columnas.
+       ●​ Tratamiento de comentarios: Explicación de las expresiones regulares utilizadas para omitir
+           comentarios de una o varias líneas sin interrumpir el flujo del análisis.
+
+
+   Analizador sintáctico                    P2
+
+   Para la segunda entrega del proyecto, se requiere el desarrollo del analizador sintáctico utilizando la librería
+   ply.yacc. Esta fase intermedia debe consolidar la definición de la gramática que generará el lenguaje
+   especificado en este enunciado. Está gramática será más tarde expandida con los controles semánticos, por
+   lo que el código entregado debe ser lo más sólido y definitivo posible, permitiendo sólo ajustes menores en
+   entregas posteriores basados en el feedback recibido.
+
+
+   La entrega debe estar compuesta obligatoriamente por dos archivos: lexer.py (el mismo que en la
+   primera entrega, con las mínimas correcciones indicadas en el feedback), parser.py, que contendrá el
+   analizador sintáctico, y main.py, que servirá como punto de entrada.
+
+
+
+
+                                                                                                                22
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+       ●​ Al ejecutar el comando main.py <file>, el programa debe procesar el archivo de entrada y no
+           mostrar ninguna salida si el fichero es una palabra perteneciente al lenguaje que genera la
+           gramática. En caso de que el fichero sea incorrecto, deberá mostrar los errores correspondientes.
+       ●​ El analizador léxico no deberá ejecutarse “manualmente”, es decir, se deberá referenciar al
+           analizador léxico en la definición del analizador sintáctico, para que este último lo utilice durante el
+           proceso de análisis, tal y como se ha explicado en clase.
+       ●​ Opcionalmente, se introducirá una opción con un comando estilo main.py –token <file> cuyo
+           comportamiento será solo ejecutar el analizador léxico y exportar el fichero .token siguiendo las
+           reglas de la entrega anterior.
+
+
+   Es muy importante que no se encuentren conflictos a la hora de generar las tablas LALR. Estos conflictos
+   deben solucionarse con modificaciones en la gramática o el uso correcto de la herramienta de precedencia.
+   Cualquier conflicto no controlado, bajará la nota drásticamente.
+
+
+       Shell
+       // Fichero de entrada - example.lava
+       int a = 28;
+       float b = 24.9;
+
+
+       // Ejecución
+       > python main.py example.lava
+       Generating LALR tables...
+
+
+       ________________________________________________________________________________
+
+
+       // Fichero con errores - error.lava
+       int a float = 3.3;
+
+
+       // Ejecución
+       > python main.py example.lava
+       Generating LALR tables...
+       [ERROR] Token 'FLOAT' inesperado en la línea 1
+
+
+
+
+   Memoria
+   Junto con el código, se debe adjuntar una memoria detallada, en formato PDF, que documente las
+   decisiones de diseño del analizador, profundizando en el razonamiento y justificación de cada una de ellas.
+       ●​ Tokens: Repaso de los tokens (símbolos terminales) capturados por el analizador léxico.
+       ●​ Definición formal de la gramática: Una gramática formal es un sistema definido como una 4-tupla,
+           utilizado para describir lenguajes formales mediante reglas de producción que generan cadenas
+           válidas de símbolos terminales (alfabeto) a partir de un símbolo inicial (axioma) y símbolos no
+           terminales: 𝐺 = (𝑉𝑛, 𝑉𝑡, 𝑃, 𝑆)
+       ●​ Desarrollo/Diseño de la gramática: Cuál es la estructura principal del lenguaje, que se permite y
+           qué no, cómo se ha definido esto en el diseño, como funcionan las expresiones, etc.
+
+
+
+
+                                                                                                                 23
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+   Análisis semántico y partes opcionales                                 P3      P3 - OPCIONAL
+
+   Para la tercera y última entrega del proyecto, se requiere la consolidación de todas las fases anteriores
+   (léxico y sintáctico) y la implementación completa del análisis semántico, incluyendo las partes opcionales
+   de diseño avanzado para optar a la máxima calificación.
+
+
+   Esta fase final asegura la corrección lógica y la coherencia de tipos de los programas en Lava, así como la
+   correcta gestión de los símbolos declarados.
+
+
+   La entrega debe estar compuesta obligatoriamente por los siguientes archivos: lexer.py, parser.py (que
+   contendrá el analizador sintáctico y semántico), y main.py, que servirá como punto de entrada.
+
+
+   Al ejecutar el comando main.py <file>, el programa deberá realizar el análisis léxico, sintáctico y semántico.
+       1.​ Si el fichero contiene errores a cualquier nivel, deberá mostrar los errores correspondientes, con el
+           formato ya definido (la interrupción o no del análisis dependerá de si se ha implementado o no la
+           parte extra de recuperación de errores)
+       2.​ Si el fichero es correcto, no debe mostrar ninguna salida por consola, pero sí debe generar los
+           archivos de salida del análisis semántico (tablas de símbolos, registros y/o funciones,
+           opcionalmente fichero de cuartetos)
+       3.​ Opcionalmente, se introducirá una opción con un comando estilo main.py –token <file> cuyo
+           comportamiento será solo ejecutar el analizador léxico y exportar el fichero .token siguiendo las
+           reglas de la entrega anterior.
+
+
+   Salida del Análisis Semántico
+   Si el programa analizado es semánticamente correcto, el analizador deberá generar dos archivos de salida
+   que reflejan las estructuras de datos utilizadas para el control semántico: la tabla de símbolos y la tabla de
+   registros (y, dependiendo del alumno, una tabla de funciones)
+       1.​ Tabla de Símbolos: Archivo con el mismo nombre del fichero de entrada y extensión .symbols.
+           Contendrá todas las variables de tipo básico declaradas en el programa, siguiendo la estructura:
+               a.​ NOMBRE:TIPO
+                      i.​   Cuando haya estructuras de control y/o funciones
+               b.​ NOMBRE:TIPO,VALOR
+                      i.​   Cuando NO haya estructuras de control y/o funciones
+
+       2.​ Tabla de Registros: Archivo con el mismo nombre del fichero de entrada y extensión .records.
+           Contendrá la definición de cada registro (record) declarado, incluyendo sus campos y tipos. La
+           estructura de salida para cada registro será:
+               c.​ NOMBRE-REGISTRO: [CAMPO1:TIPO1, CAMPO2:TIPO2, ... ]
+
+       3.​ Tabla de Funciones (opcional): Archivo con el mismo nombre del fichero de entrada y extensión
+           .functions. Contendrá la definición de cada función declarada, incluyendo sus parámetros de
+           entrada y tipos, así como el tipo de salida. Se puede omitir la creación de esta tabla y reutilizar la
+           tabla de registros para almacenar las funciones. La estructura de salida para cada registro será:
+               ○​ NOMBRE-FUNCIÓN: [PARÁMETRO1:TIPO1, PARÁMETRO2::TIPO2, …],TIPO-RETURN
+
+
+
+
+                                                                                                                    24
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+
+
+       Java
+       float f1, f2;                      Java
+       boolean b1;                        // Symbols
+                                          f1:float,12.0
+       f1 = 5 * 4 - 80 / 10;              f2:float,24.0
+       f2 = 10 / 5 * f1;                  b1:boolean,false
+       b1 = 5 < 3;
+
+
+
+
+       Java
+       record Point(float x1, x2);
+                                          Java
+       record Ball(Point pos, float r);
+                                          // Symbols
+                                          ball:Ball,{pos:{x1:1000,x2:4.0},r:2.3}
+       Ball ball = new Ball(
+           new Point(1.2, 4),
+                                          // Records
+           2.3
+                                          Point:[x1:float,x2:float]
+       );
+                                          Ball:[center:Point,r:float]
+
+       ball.pos.x1 = 10e2;
+
+
+
+
+       Java
+       int i = 0;
+                                          Java
+       while (i < 5) {
+                                          // Symbols
+           i = i + 1;​
+                                          i:int
+           print(i);
+       }
+
+
+
+
+       Java
+       float square(float f) {
+           return f * f;
+                                          Java
+       }​
+                                          // Symbols
+       ​
+                                          d:float
+       int square(int i) {
+           return i * i;
+                                          // Functions
+       }​
+                                          square:[f:float],float
+       ​
+                                          square:[i:int],int
+       float d;
+       d = 3.7;
+       d = d + square(d);
+
+
+
+
+                                                                                   25
+Procesadores del Lenguaje
+Curso 2025/26
+
+
+   Partes opcionales
+   Para poder obtener la calificación máxima, el proyecto deberá incluir la implementación de una de las
+   siguientes partes opcionales, tal y como se detalla en la sección "Diseño avanzado" del enunciado:
+       1.​ Generación de código intermedio: Se debe generar un archivo con extensión .quartets que
+           contenga la secuencia de cuartetos correspondiente al programa.
+       2.​ Recuperación de errores: Se debe implementar una estrategia robusta para la detección de errores
+           léxicos, sintácticos y semánticos, con una descripción detallada en la memoria.
+
+
+   Memoria
+   Junto con el código, se debe adjuntar una memoria detallada, en formato PDF, que documente las
+   decisiones de diseño del analizador semántico y de la parte opcional elegida.
+       1.​ Portada: asignatura, práctica, composición y nombre del grupo, año lectivo.
+       2.​ Tabla de contenidos: secciones y números de página correspondientes.
+       3.​ Introducción
+       4.​ Gramática: versión final de la gramática implementada, en notación BNF.
+       5.​ Breve descripción de la solución: explicar la solución implementada y los controles semánticos
+           realizados.
+       6.​ Archivos de prueba: explicación de los aspectos probados en los archivos de prueba entregados.
+       7.​ Conclusiones: aspectos adicionales a tener en cuenta por el corrector, y hechos a destacar sobre
+           desarrollo de la práctica (incluyendo, pero no limitándose, a opiniones personales sobre el material
+           de partida, conocimientos y cantidad de trabajo necesaria para su consecución).
+
+
+
+
+                                                                                                              26
+
