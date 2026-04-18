@@ -2,7 +2,7 @@ import ply.yacc as yacc
 from lexer import LexerClass
 
 class ParserClass:
-    """Analizador Sintáctico del lenguaje Lava"""
+    """Analizador Sintáctico y Semántico del lenguaje Lava"""
 
     # Reutiliza la lista de tokens definida en el lexer.
     tokens = LexerClass.tokens
@@ -26,16 +26,120 @@ class ParserClass:
         ('left',     'DOT'),            
     )
 
+    DEFAULT_TYPES = {
+        'int': 0, 
+        'float': 0.0, 
+        'char': '', 
+        'boolean': False
+    }
+
     def __init__(self):
         """Inicializa el parser y define las reglas de producción."""
-       # Guarda una instancia del lexer.
+        # Guarda una instancia del lexer.
         self.lexer = LexerClass().lexer
 
         # Marca si durante el análisis ha aparecido algún error sintáctico.
         self.has_syntax_error = False
 
+        # Marca si durante el análisis ha aparecido algún error semántico.
+        self.has_semantic_error = False
+
+        # Tablas semánticas principales.
+
+        # Tabla de variables  { nombre -> tipo }
+        self.symbols = {}  
+        # Tabla de registros  { nombre -> {campo -> tipo} }     
+        self.records = {}  
+        # Tabla de funciones  { nombre -> [{'params':[(tipo,id),...], 'return_type':tipo}] }     
+        self.functions = {}    
+
+        # Pila de ámbitos. El primero es el ámbito global.
+        self.stack = [self.symbols]
+
+        # Contexto de análisis semántico.
+        self.current_function = None
+        self.loop_depth = 0
+
         # Construye el parser de PLY a partir de las reglas de esta clase.
         self.parser = yacc.yacc(module=self)
+
+    def _reiniciar_estado_semantico(self):
+        """Reinicia tablas y estado semántico para un nuevo parse."""
+        self.has_semantic_error = False
+        self.symbols = {}
+        self.records = {}
+        self.functions = {}
+        self.stack = [self.symbols]
+        self.current_function = None
+        self.loop_depth = 0
+
+    # =========================================================
+    # UTILIDADES SEMÁNTICAS BÁSICAS 
+    # =========================================================
+
+    def _buscar_simbolo(self, name):
+        """Busca un símbolo en la pila de ámbitos (de interno a externo)."""
+        for elem in reversed(self.stack):
+            if name in elem:
+                return elem[name]
+        return None
+
+    def _actualizar_simbolo(self, name, value):
+        """Actualiza el valor de un símbolo ya declarado."""
+        for elem in reversed(self.stack):
+            if name in elem:
+                symbol_type, _ = elem[name]
+                elem[name] = (symbol_type, value)
+                return True
+        return False
+
+    def _auto_convert(self, source_type: str, target_type: str):
+        """Reglas de conversión automática ."""
+        if source_type == target_type:
+            return True
+        if source_type == 'char' and target_type in ('int', 'float'):
+            return True
+        if source_type == 'int' and target_type == 'float':
+            return True
+        return False
+
+    def _valor_por_defecto(self, type_name: str):
+        if type_name in self.DEFAULT_TYPES:
+            return self.DEFAULT_TYPES[type_name]
+        return None
+
+    def _es_tipo_numerico(self, type_name):
+        return type_name in ('char', 'int', 'float')
+
+    def _tipo_numerico_comun(self, left_type, right_type):
+        if 'float' in (left_type, right_type):
+            return 'float'
+        if 'int' in (left_type, right_type):
+            return 'int'
+        return 'char'
+
+    def _convertir_numero(self, value, source_type, target_type):
+        if value is None or source_type == target_type:
+            return value
+
+        if source_type == 'char' and target_type == 'int':
+            return ord(value) if isinstance(value, str) and len(value) == 1 else int(value)
+
+        if source_type == 'char' and target_type == 'float':
+            if isinstance(value, str) and len(value) == 1:
+                return float(ord(value))
+            return float(value)
+
+        if source_type == 'int' and target_type == 'float':
+            return float(value)
+
+        return value
+
+    def _normalizar_operandos_numericos(self, left_type, left_value, right_type, right_value):
+        common_type = self._tipo_numerico_comun(left_type, right_type)
+        left_num = self._convertir_numero(left_value, left_type, common_type)
+        right_num = self._convertir_numero(right_value, right_type, common_type)
+        return common_type, left_num, right_num
     
     # =========================================================
     # MÉTODOS DE ENTRADA
@@ -45,6 +149,7 @@ class ParserClass:
         """Analiza una cadena de entrada."""
         # Reinicia el indicador de error antes de cada análisis.
         self.has_syntax_error = False
+        self._reiniciar_estado_semantico()
 
         # Crea un lexer nuevo para esta entrada concreta.
         lexer_instance = LexerClass()
@@ -68,6 +173,7 @@ class ParserClass:
         except Exception as e:
             # Captura cualquier otro error inesperado.
             print("ERROR: error inesperado:", e)
+
     
     # =========================================================
     # REGLAS DE PRODUCCIÓN
@@ -116,20 +222,78 @@ class ParserClass:
     # Reconoce una declaración tipada global o una función con retorno tipado.
     def p_declaracion_o_funcion_tipada(self, p):
         '''declaracion_o_funcion_tipada : tipo ID resto_tipado_programa'''
-        pass
+        type_name, id_name, info = p[1], p[2], p[3]
+        line = p.lineno(2)
+        scope = self.stack[-1]
+
+        # --- Es una función tipada ---
+        if info.get('kind') == 'function':
+            return
+
+        # --- Es una lista de declaraciones: int a, b, c ---
+        if info.get('kind') == 'decl_list':
+            for name in [id_name] + info.get('ids', []):
+                if name in scope:
+                    self.has_semantic_error = True
+                    print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
+                else:
+                    scope[name] = (type_name, self._valor_por_defecto(type_name))
+            return
+
+        # --- Es una declaración con inicialización: int a = expr ---
+        if info.get('kind') != 'init':
+            return
+
+        if id_name in scope:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Variable '{id_name}' ya declarada en este ámbito")
+            return
+
+        expr_type, expr_val = info.get('expr', ('error', None))
+
+        if expr_type == 'error':
+            can_assign = False
+        elif expr_type == 'unknown':
+            can_assign = True
+        else:
+            can_assign = self._auto_convert(expr_type, type_name)
+
+        if not can_assign:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede asignar tipo '{expr_type}' a '{id_name}' de tipo '{type_name}'")
+            return
+
+        # Conversión de valor si los tipos difieren pero son compatibles
+        if expr_val is not None and expr_type != type_name:
+            if expr_type == 'char' and isinstance(expr_val, str):
+                expr_val = ord(expr_val)
+            if type_name == 'float' and expr_type in ('char', 'int'):
+                expr_val = float(expr_val)
+            elif type_name == 'int' and expr_type == 'char':
+                expr_val = int(expr_val)
+
+        scope[id_name] = (type_name, expr_val)
 
     # Desambigua si un elemento tipado es función o declaración de variable global.
     def p_resto_tipado_programa(self, p):
         '''resto_tipado_programa : LPAREN parametros_opt RPAREN bloque
                                 | ASSIGN expresion SEMICOLON
                                 | resto_lista_ids SEMICOLON'''
-        pass
+        if len(p) == 5 and p.slice[1].type == 'LPAREN':
+            p[0] = {'kind': 'function'}
+        elif len(p) == 4:
+            p[0] = {'kind': 'init', 'expr': p[2]}
+        else:
+            p[0] = {'kind': 'decl_list', 'ids': p[1]}
 
     # Reconoce la continuación de una lista de identificadores separada por comas.
     def p_resto_listas_ids(self, p):
         '''resto_lista_ids : lambda
                          | resto_lista_ids COMMA ID'''
-        pass
+        if len(p) == 2:
+            p[0] = []
+        else:
+            p[0] = p[1] + [p[3]]
 
     # =======================================
     # BLOQUES Y CONTROL DE FLUJO 
@@ -272,18 +436,107 @@ class ParserClass:
     def p_declaracion_variable(self, p):
         '''declaracion_variable : tipo lista_ids
                                | tipo ID ASSIGN expresion'''
-        pass
+        type_name = p[1]
+        line = p.lineno(2)
+        scope = self.stack[-1]
+
+        # --- Es una lista de declaraciones: int a, b, c ---
+        if len(p) == 3:
+            for name in p[2]:
+                if name in scope:
+                    self.has_semantic_error = True
+                    print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
+                else:
+                    scope[name] = (type_name, self._valor_por_defecto(type_name))
+            return
+
+        # --- Es una declaración con inicialización: int a = expr ---
+        id_name = p[2]
+        expr_type, expr_val = ('error', None)
+        if isinstance(p[4], tuple) and len(p[4]) == 2:
+            expr_type, expr_val = p[4]
+
+        if id_name in scope:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Variable '{id_name}' ya declarada en este ámbito")
+            return
+
+        if expr_type == 'error':
+            can_assign = False
+        elif expr_type == 'unknown':
+            can_assign = True
+        else:
+            can_assign = self._auto_convert(expr_type, type_name)
+
+        if not can_assign:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede asignar tipo '{expr_type}' a '{id_name}' de tipo '{type_name}'")
+            return
+
+        # Conversión de valor si los tipos difieren pero son compatibles
+        if expr_val is not None and expr_type != type_name:
+            if expr_type == 'char' and isinstance(expr_val, str):
+                expr_val = ord(expr_val)
+            if type_name == 'float' and expr_type in ('char', 'int'):
+                expr_val = float(expr_val)
+            elif type_name == 'int' and expr_type == 'char':
+                expr_val = int(expr_val)
+
+        scope[id_name] = (type_name, expr_val)
 
     # Reconoce una lista de identificadores separada por comas.
     def p_lista_ids(self, p):
         '''lista_ids : ID
                     | lista_ids COMMA ID'''
-        pass
+        if len(p) == 2:
+            p[0] = [p[1]]
+        else:
+            p[0] = p[1] + [p[3]]
 
     # Reconoce una asignación a una variable o acceso por punto.
     def p_asignacion(self, p):
         '''asignacion : acceso ASSIGN expresion'''
-        pass
+        left = p[1]
+        line = p.lineno(2)
+
+        if not isinstance(left, dict):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Lado izquierdo de asignación inválido")
+            return
+
+        if left.get('kind') != 'var':
+            # La semántica de asignación a campos de registros se completa en el siguiente paso.
+            return
+
+        id_name = left['name']
+        type_name = left['type']
+
+        expr_type, expr_val = ('error', None)
+        if isinstance(p[3], tuple) and len(p[3]) == 2:
+            expr_type, expr_val = p[3]
+
+        if 'error' in (type_name, expr_type):
+            can_assign = False
+        elif 'unknown' in (type_name, expr_type):
+            can_assign = True
+        else:
+            can_assign = self._auto_convert(expr_type, type_name)
+
+        if not can_assign:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede asignar tipo '{expr_type}' a '{id_name}' de tipo '{type_name}'")
+            return
+
+        # Conversión de valor si los tipos difieren pero son compatibles
+        if expr_val is not None and expr_type != type_name:
+            if expr_type == 'char' and isinstance(expr_val, str):
+                expr_val = ord(expr_val)
+            if type_name == 'float' and expr_type in ('char', 'int'):
+                expr_val = float(expr_val)
+            elif type_name == 'int' and expr_type == 'char':
+                expr_val = int(expr_val)
+
+        self._actualizar_simbolo(id_name, expr_val)
 
     # Reconoce una llamada a la función del sistema print.
     def p_print_stmt(self, p):
@@ -340,7 +593,7 @@ class ParserClass:
                 | CHAR
                 | BOOLEAN
                 | ID'''
-        pass
+        p[0] = p[1]
 
     # =======================================
     # EXPRESIONES
@@ -359,20 +612,189 @@ class ParserClass:
                     | expresion MINUS expresion
                     | expresion TIMES expresion
                     | expresion DIVIDE expresion'''
-        pass
+        
+        left_expr, right_expr = p[1], p[3]
+      
+        if isinstance(left_expr, tuple) and len(left_expr) == 2:
+            left_type, left_value = left_expr
+        else:
+            left_type, left_value = ('error', None)
+
+        if isinstance(right_expr, tuple) and len(right_expr) == 2:
+            right_type, right_value = right_expr
+        else:
+            right_type, right_value = ('error', None)
+
+        operator_type = p.slice[2].type
+        line = getattr(p.slice[2], 'lineno', '?')
+
+        if 'error' in (left_type, right_type):
+            p[0] = ('error', None)
+            return
+
+        # En este paso se permiten valores desconocidos para no bloquear
+        # reglas semánticas aún no implementadas (funciones/registros).
+        if 'unknown' in (left_type, right_type):
+            p[0] = ('unknown', None)
+            return
+
+        if operator_type in ('PLUS', 'MINUS', 'TIMES', 'DIVIDE'):
+            if not (self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type)):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Operación aritmética inválida entre '{left_type}' y '{right_type}'")
+                p[0] = ('error', None)
+                return
+
+            result_type = self._tipo_numerico_comun(left_type, right_type)
+            result_value = None
+
+            if left_value is not None and right_value is not None:
+                try:
+                    _, l_val, r_val = self._normalizar_operandos_numericos(
+                        left_type, left_value, right_type, right_value
+                    )
+
+                    if operator_type == 'PLUS':
+                        raw = l_val + r_val
+                    elif operator_type == 'MINUS':
+                        raw = l_val - r_val
+                    elif operator_type == 'TIMES':
+                        raw = l_val * r_val
+                    elif r_val == 0:
+                        raw = None
+                    elif result_type == 'int':
+                        raw = int(l_val / r_val)
+                    else:
+                        raw = l_val / r_val
+
+                    if raw is not None and result_type == 'char':
+                        result_value = chr(int(raw) % 256)
+                    else:
+                        result_value = raw
+                except (TypeError, ValueError, ZeroDivisionError):
+                    result_value = None
+
+            p[0] = (result_type, result_value)
+            return
+
+        if operator_type in ('GREATER', 'GREATER_EQUAL', 'LESS', 'LESS_EQUAL'):
+            if not (self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type)):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Operación comparativa inválida entre '{left_type}' y '{right_type}'")
+                p[0] = ('error', None)
+                return
+
+            result_value = None
+            if left_value is not None and right_value is not None:
+                _, l_val, r_val = self._normalizar_operandos_numericos(
+                    left_type, left_value, right_type, right_value
+                )
+
+                if operator_type == 'GREATER':
+                    result_value = l_val > r_val
+                elif operator_type == 'GREATER_EQUAL':
+                    result_value = l_val >= r_val
+                elif operator_type == 'LESS':
+                    result_value = l_val < r_val
+                else:
+                    result_value = l_val <= r_val
+
+            p[0] = ('boolean', result_value)
+            return
+
+        if operator_type == 'EQUAL':
+            comparable = (
+                left_type == right_type
+                or self._auto_convert(left_type, right_type)
+                or self._auto_convert(right_type, left_type)
+            )
+            if not comparable:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: No se pueden comparar tipos '{left_type}' y '{right_type}' con '=='")
+                p[0] = ('error', None)
+                return
+
+            result_value = None
+            if left_value is not None and right_value is not None:
+                if self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type):
+                    _, l_val, r_val = self._normalizar_operandos_numericos(
+                        left_type, left_value, right_type, right_value
+                    )
+                    result_value = (l_val == r_val)
+                else:
+                    result_value = (left_value == right_value)
+
+            p[0] = ('boolean', result_value)
+            return
+
+        if operator_type in ('AND', 'OR'):
+            if left_type != 'boolean' or right_type != 'boolean':
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Operación lógica inválida entre '{left_type}' y '{right_type}'")
+                p[0] = ('error', None)
+                return
+
+            result_value = None
+            if left_value is not None and right_value is not None:
+                if operator_type == 'AND':
+                    result_value = left_value and right_value
+                else:
+                    result_value = left_value or right_value
+
+            p[0] = ('boolean', result_value)
+            return
+
+        p[0] = ('error', None)
     
     # Operadores unarios del lenguaje (NOT, +, -).
     def p_expresion_unaria(self, p):
         '''expresion : NOT expresion
                     | MINUS expresion %prec UMINUS
                     | PLUS expresion %prec UPLUS'''
-        pass
+        expr = p[2]
+        if isinstance(expr, tuple) and len(expr) == 2:
+            expr_type, expr_value = expr
+        else:
+            expr_type, expr_value = ('error', None)
+
+        operator_type = p.slice[1].type
+        line = getattr(p.slice[1], 'lineno', '?')
+
+        if expr_type in ('error', 'unknown'):
+            p[0] = (expr_type, None)
+            return
+
+        if operator_type == 'NOT':
+            if expr_type != 'boolean':
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: El operador '!' requiere boolean y recibió '{expr_type}'")
+                p[0] = ('error', None)
+                return
+
+            p[0] = ('boolean', None if expr_value is None else (not expr_value))
+            return
+
+        if not self._es_tipo_numerico(expr_type):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El operador unario requiere tipo numérico y recibió '{expr_type}'")
+            p[0] = ('error', None)
+            return
+
+        if expr_value is None or operator_type == 'PLUS':
+            p[0] = (expr_type, expr_value)
+            return
+
+        if expr_type == 'char' and isinstance(expr_value, str) and len(expr_value) == 1:
+            p[0] = ('char', chr((-ord(expr_value)) % 256))
+            return
+
+        p[0] = (expr_type, -expr_value)
     
 
     # Reduce una expresión al nivel de primario.
     def p_expresion_primaria(self, p):
         '''expresion : primario'''
-        pass
+        p[0] = p[1]
 
     # Reconoce expresiones primarias del lenguaje.
     def p_primario(self, p):
@@ -381,13 +803,49 @@ class ParserClass:
                    | llamada
                    | LPAREN expresion RPAREN
                    | instanciacion'''
-        pass
+        if len(p) == 2:
+            node = p[1]
+            if isinstance(node, tuple) and len(node) == 2:
+                p[0] = node
+            elif isinstance(node, dict):
+                p[0] = (node.get('type', 'unknown'), node.get('value'))
+            else:
+                p[0] = ('unknown', None)
+        else:
+            p[0] = p[2]
 
     # Reconoce accesos a variables o a campos encadenados con punto.
     def p_acceso(self, p):
         '''acceso : ID
                   | acceso DOT ID'''
-        pass
+        if len(p) == 2:
+            var_name = p[1]
+            symbol = self._buscar_simbolo(var_name)
+            if symbol is None:
+                self.has_semantic_error = True
+                line = getattr(p.slice[1], 'lineno', '?')
+                print(f"[ERROR SEMANTICO] Linea {line}: La variable '{var_name}' no ha sido declarada")
+                p[0] = {'kind': 'invalid', 'name': var_name, 'type': 'error', 'value': None}
+                return
+
+            p[0] = {
+                'kind': 'var',
+                'name': var_name,
+                'type': symbol[0],
+                'value': symbol[1]
+            }
+            return
+
+        # La resolución tipada de campos de registro se implementa en el siguiente paso.
+        left_access = p[1]
+        field_name = p[3]
+        base_name = left_access.get('name', '?') if isinstance(left_access, dict) else '?'
+        p[0] = {
+            'kind': 'field',
+            'name': f"{base_name}.{field_name}",
+            'type': 'unknown',
+            'value': None
+        }
 
     # Reconoce llamadas a funciones con argumentos opcionales.
     def p_llamada(self, p):
@@ -418,7 +876,15 @@ class ParserClass:
                   | CHAR_VALUE
                   | TRUE
                   | FALSE'''
-        pass
+        token_type = p.slice[1].type
+        if token_type == 'INT_VALUE':
+            p[0] = ('int', p[1])
+        elif token_type == 'FLOAT_VALUE':
+            p[0] = ('float', p[1])
+        elif token_type == 'CHAR_VALUE':
+            p[0] = ('char', p[1])
+        else:
+            p[0] = ('boolean', p[1])
 
     # =======================================
     # PRODUCCIÓN VACÍA
