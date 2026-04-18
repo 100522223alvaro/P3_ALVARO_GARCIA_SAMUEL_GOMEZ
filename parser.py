@@ -1,4 +1,5 @@
 import ply.yacc as yacc
+import os
 from lexer import LexerClass
 
 class ParserClass:
@@ -59,6 +60,10 @@ class ParserClass:
         # Contexto de análisis semántico.
         self.current_function = None
         self.loop_depth = 0
+        self._tiene_flujo_o_funciones = False
+        self._decl_tipo_actual = None
+        self._decl_id_actual = None
+        self._decl_linea_actual = '?'
 
         # Construye el parser de PLY a partir de las reglas de esta clase.
         self.parser = yacc.yacc(module=self)
@@ -72,6 +77,10 @@ class ParserClass:
         self.stack = [self.symbols]
         self.current_function = None
         self.loop_depth = 0
+        self._tiene_flujo_o_funciones = False
+        self._decl_tipo_actual = None
+        self._decl_id_actual = None
+        self._decl_linea_actual = '?'
 
     # =========================================================
     # UTILIDADES SEMÁNTICAS BÁSICAS 
@@ -103,10 +112,53 @@ class ParserClass:
             return True
         return False
 
-    def _valor_por_defecto(self, type_name: str):
+    def _costo_conversion(self, source_type, target_type):
+        if source_type == target_type:
+            return 0
+        if source_type == 'char' and target_type == 'int':
+            return 1
+        if source_type == 'int' and target_type == 'float':
+            return 1
+        if source_type == 'char' and target_type == 'float':
+            return 2
+        return None
+
+    def _valor_por_defecto(self, type_name: str, visited=None):
         if type_name in self.DEFAULT_TYPES:
             return self.DEFAULT_TYPES[type_name]
-        return None
+
+        if type_name not in self.records:
+            return None
+
+        if visited is None:
+            visited = set()
+        if type_name in visited:
+            return None
+
+        visited = visited | {type_name}
+        record_instance = {'__record_type__': type_name}
+        for field_name, field_type in self.records[type_name].items():
+            record_instance[field_name] = self._valor_por_defecto(field_type, visited)
+
+        return record_instance
+
+    def _es_tipo_valido(self, type_name):
+        return type_name in self.DEFAULT_TYPES or type_name in self.records
+
+    def _registrar_firma_funcion(self, func_name, params, return_type, line='?'):
+        if func_name not in self.functions:
+            self.functions[func_name] = []
+
+        param_types = [param_type for param_type, _ in params]
+        for signature in self.functions[func_name]:
+            signature_types = [param_type for param_type, _ in signature.get('params', [])]
+            if signature_types == param_types:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: La función '{func_name}' con esa firma ya fue declarada")
+                return False
+
+        self.functions[func_name].append({'params': params, 'return_type': return_type})
+        return True
 
     def _es_tipo_numerico(self, type_name):
         return type_name in ('char', 'int', 'float')
@@ -119,7 +171,15 @@ class ParserClass:
         return 'char'
 
     def _convertir_numero(self, value, source_type, target_type):
-        if value is None or source_type == target_type:
+        if value is None:
+            return value
+
+        if source_type == target_type:
+            # Para operar/comparar numéricamente dos char, se usa su código ASCII.
+            if source_type == 'char' and target_type == 'char':
+                if isinstance(value, str) and len(value) == 1:
+                    return ord(value)
+                return int(value)
             return value
 
         if source_type == 'char' and target_type == 'int':
@@ -140,6 +200,62 @@ class ParserClass:
         left_num = self._convertir_numero(left_value, left_type, common_type)
         right_num = self._convertir_numero(right_value, right_type, common_type)
         return common_type, left_num, right_num
+
+    def _condicion_es_valida(self, expr, line, contexto):
+        expr_type = 'error'
+        if isinstance(expr, tuple) and len(expr) == 2:
+            expr_type = expr[0]
+
+        if expr_type == 'boolean' or expr_type == 'unknown':
+            return True
+
+        if expr_type != 'error':
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: La condición de '{contexto}' debe ser de tipo 'boolean' y recibió '{expr_type}'")
+        return False
+
+    def _formatear_valor(self, value):
+        if isinstance(value, bool):
+            return 'true' if value else 'false'
+
+        if isinstance(value, dict):
+            campos = []
+            for key, field_value in value.items():
+                if key == '__record_type__':
+                    continue
+                campos.append(f"{key}:{self._formatear_valor(field_value)}")
+            return '{' + ','.join(campos) + '}'
+
+        return str(value)
+
+    def exportar_tablas_semanticas(self, input_path):
+        base = os.path.splitext(input_path)[0]
+
+        symbols_path = base + '.symbols'
+        records_path = base + '.records'
+        functions_path = base + '.functions'
+
+        usar_solo_tipos = self._tiene_flujo_o_funciones or bool(self.functions)
+
+        with open(symbols_path, 'w', encoding='utf-8') as out_symbols:
+            for name, (type_name, value) in self.symbols.items():
+                if usar_solo_tipos:
+                    out_symbols.write(f"{name}:{type_name}\n")
+                else:
+                    out_symbols.write(f"{name}:{type_name},{self._formatear_valor(value)}\n")
+
+        with open(records_path, 'w', encoding='utf-8') as out_records:
+            for record_name, record_schema in self.records.items():
+                campos = ','.join(f"{field_name}:{field_type}" for field_name, field_type in record_schema.items())
+                out_records.write(f"{record_name}:[{campos}]\n")
+
+        with open(functions_path, 'w', encoding='utf-8') as out_functions:
+            for function_name, signatures in self.functions.items():
+                for signature in signatures:
+                    params = signature.get('params', [])
+                    params_txt = ','.join(f"{param_name}:{param_type}" for param_type, param_name in params)
+                    return_type = signature.get('return_type', 'void')
+                    out_functions.write(f"{function_name}:[{params_txt}],{return_type}\n")
     
     # =========================================================
     # MÉTODOS DE ENTRADA
@@ -216,18 +332,67 @@ class ParserClass:
 
     # Reconoce una declaración de función con retorno void.
     def p_declaracion_funcion_void(self, p):
-        '''declaracion_funcion_void : VOID ID LPAREN parametros_opt RPAREN bloque_void'''
+        '''declaracion_funcion_void : VOID ID LPAREN parametros_opt RPAREN inicio_funcion_void bloque_void fin_funcion_void'''
         pass
+
+    def p_inicio_funcion_void(self, p):
+        '''inicio_funcion_void :'''
+        func_name = p[-4]
+        params = p[-2] if isinstance(p[-2], list) else []
+        line = getattr(p.lexer, 'lineno', '?')
+
+        self._tiene_flujo_o_funciones = True
+
+        if any(param_type == 'error' for param_type, _ in params):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede declarar la función '{func_name}' con parámetros de tipo inválido")
+        else:
+            self._registrar_firma_funcion(func_name, params, 'void', line)
+
+        func_scope = {}
+        for param_type, param_name in params:
+            if param_name in func_scope:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Parámetro '{param_name}' repetido en la función '{func_name}'")
+            else:
+                func_scope[param_name] = (param_type, None)
+
+        self.stack.append(func_scope)
+        self.current_function = {
+            'name': func_name,
+            'return_type': 'void',
+            'has_return': False
+        }
+
+    def p_fin_funcion_void(self, p):
+        '''fin_funcion_void :'''
+        if len(self.stack) > 1:
+            self.stack.pop()
+        self.current_function = None
 
     # Reconoce una declaración tipada global o una función con retorno tipado.
     def p_declaracion_o_funcion_tipada(self, p):
-        '''declaracion_o_funcion_tipada : tipo ID resto_tipado_programa'''
-        type_name, id_name, info = p[1], p[2], p[3]
+        '''declaracion_o_funcion_tipada : tipo ID marcar_declaracion_tipada resto_tipado_programa'''
+        type_name, id_name, info = p[1], p[2], p[4]
         line = p.lineno(2)
         scope = self.stack[-1]
 
+        if not self._es_tipo_valido(type_name):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{type_name}' no existe")
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
+            return
+
         # --- Es una función tipada ---
         if info.get('kind') == 'function':
+            if not info.get('has_return', False):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: La función '{id_name}' debe retornar un valor de tipo '{type_name}'")
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
             return
 
         # --- Es una lista de declaraciones: int a, b, c ---
@@ -238,15 +403,24 @@ class ParserClass:
                     print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
                 else:
                     scope[name] = (type_name, self._valor_por_defecto(type_name))
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
             return
 
         # --- Es una declaración con inicialización: int a = expr ---
         if info.get('kind') != 'init':
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
             return
 
         if id_name in scope:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: Variable '{id_name}' ya declarada en este ámbito")
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
             return
 
         expr_type, expr_val = info.get('expr', ('error', None))
@@ -261,6 +435,9 @@ class ParserClass:
         if not can_assign:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: No se puede asignar tipo '{expr_type}' a '{id_name}' de tipo '{type_name}'")
+            self._decl_tipo_actual = None
+            self._decl_id_actual = None
+            self._decl_linea_actual = '?'
             return
 
         # Conversión de valor si los tipos difieren pero son compatibles
@@ -273,18 +450,69 @@ class ParserClass:
                 expr_val = int(expr_val)
 
         scope[id_name] = (type_name, expr_val)
+        self._decl_tipo_actual = None
+        self._decl_id_actual = None
+        self._decl_linea_actual = '?'
+
+    def p_marcar_declaracion_tipada(self, p):
+        '''marcar_declaracion_tipada :'''
+        self._decl_tipo_actual = p[-2]
+        self._decl_id_actual = p[-1]
+        self._decl_linea_actual = getattr(p.lexer, 'lineno', '?')
 
     # Desambigua si un elemento tipado es función o declaración de variable global.
     def p_resto_tipado_programa(self, p):
-        '''resto_tipado_programa : LPAREN parametros_opt RPAREN bloque
+        '''resto_tipado_programa : LPAREN parametros_opt RPAREN inicio_funcion_tipada bloque fin_funcion_tipada
                                 | ASSIGN expresion SEMICOLON
                                 | resto_lista_ids SEMICOLON'''
-        if len(p) == 5 and p.slice[1].type == 'LPAREN':
-            p[0] = {'kind': 'function'}
+        if len(p) == 7 and p.slice[1].type == 'LPAREN':
+            p[0] = {'kind': 'function', 'has_return': p[6].get('has_return', False)}
         elif len(p) == 4:
             p[0] = {'kind': 'init', 'expr': p[2]}
         else:
             p[0] = {'kind': 'decl_list', 'ids': p[1]}
+
+    def p_inicio_funcion_tipada(self, p):
+        '''inicio_funcion_tipada :'''
+        return_type = self._decl_tipo_actual
+        func_name = self._decl_id_actual
+        params = p[-2] if isinstance(p[-2], list) else []
+        line = self._decl_linea_actual
+
+        self._tiene_flujo_o_funciones = True
+
+        if any(param_type == 'error' for param_type, _ in params):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede declarar la función '{func_name}' con parámetros de tipo inválido")
+        else:
+            self._registrar_firma_funcion(func_name, params, return_type, line)
+
+        func_scope = {}
+        for param_type, param_name in params:
+            if param_name in func_scope:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Parámetro '{param_name}' repetido en la función '{func_name}'")
+            else:
+                func_scope[param_name] = (param_type, None)
+
+        self.stack.append(func_scope)
+        self.current_function = {
+            'name': func_name,
+            'return_type': return_type,
+            'has_return': False
+        }
+
+    def p_fin_funcion_tipada(self, p):
+        '''fin_funcion_tipada :'''
+        has_return = False
+        if isinstance(self.current_function, dict):
+            has_return = self.current_function.get('has_return', False)
+
+        if len(self.stack) > 1:
+            self.stack.pop()
+        self.current_function = None
+
+        p[0] = {'has_return': has_return}
 
     # Reconoce la continuación de una lista de identificadores separada por comas.
     def p_resto_listas_ids(self, p):
@@ -336,7 +564,8 @@ class ParserClass:
     # Reconoce una sentencia if dentro de una función void.
     def p_sentencia_if_void(self, p):
         '''sentencia_if_void : IF LPAREN expresion RPAREN bloque_void else_void_opt'''
-        pass
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[3], p.lineno(1), 'if')
 
     # Reconoce la cláusula else opcional dentro de una función void.
     def p_else_void_opt(self, p):
@@ -346,13 +575,15 @@ class ParserClass:
 
     # Reconoce una sentencia while dentro de una función void.
     def p_sentencia_while_void(self, p):
-        '''sentencia_while_void : WHILE LPAREN expresion RPAREN bloque_void'''
-        pass
+        '''sentencia_while_void : WHILE LPAREN expresion RPAREN entrar_bucle bloque_void salir_bucle'''
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[3], p.lineno(1), 'while')
 
     # Reconoce una sentencia do-while dentro de una función void.
     def p_sentencia_do_while_void(self, p):
-        '''sentencia_do_while_void : DO bloque_void WHILE LPAREN expresion RPAREN'''
-        pass
+        '''sentencia_do_while_void : DO entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN'''
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
 
     # Reconoce sentencias simples válidas dentro de una función void.
     def p_sentencia_simple_void(self, p):
@@ -360,7 +591,9 @@ class ParserClass:
                                 | print_stmt
                                 | BREAK
                                 | expresion'''
-        pass
+        if len(p) == 2 and p.slice[1].type == 'BREAK' and self.loop_depth <= 0:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {p.lineno(1)}: 'break' fuera de un bucle")
 
     # =======================================
     # BLOQUES Y CONTROL DE FLUJO (con return)
@@ -401,7 +634,8 @@ class ParserClass:
     # Reconoce una sentencia if general del lenguaje.
     def p_sentencia_if(self, p):
         '''sentencia_if : IF LPAREN expresion RPAREN bloque else_opt'''
-        pass
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[3], p.lineno(1), 'if')
 
     # Reconoce la cláusula else opcional en un if general.
     def p_else_opt(self, p):
@@ -411,13 +645,23 @@ class ParserClass:
 
     # Reconoce una sentencia while general del lenguaje.
     def p_sentencia_while(self, p):
-        '''sentencia_while : WHILE LPAREN expresion RPAREN bloque'''
-        pass
+        '''sentencia_while : WHILE LPAREN expresion RPAREN entrar_bucle bloque salir_bucle'''
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[3], p.lineno(1), 'while')
 
     # Reconoce una sentencia do-while general del lenguaje.
     def p_sentencia_do_while(self, p):
-        '''sentencia_do_while : DO bloque WHILE LPAREN expresion RPAREN'''
-        pass
+        '''sentencia_do_while : DO entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN'''
+        self._tiene_flujo_o_funciones = True
+        self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
+
+    def p_entrar_bucle(self, p):
+        '''entrar_bucle :'''
+        self.loop_depth += 1
+
+    def p_salir_bucle(self, p):
+        '''salir_bucle :'''
+        self.loop_depth = max(0, self.loop_depth - 1)
 
     # =======================================
     # DECLARACIONES Y SENTENCIAS SIMPLES
@@ -430,7 +674,43 @@ class ParserClass:
                            | BREAK
                            | RETURN expresion
                            | expresion'''
-        pass
+        if len(p) == 2 and p.slice[1].type == 'BREAK':
+            if self.loop_depth <= 0:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {p.lineno(1)}: 'break' fuera de un bucle")
+            return
+
+        if len(p) != 3 or p.slice[1].type != 'RETURN':
+            return
+
+        line = p.lineno(1)
+
+        if self.current_function is None:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: 'return' fuera de una función")
+            return
+
+        # Marca que existe al menos un return en la función (aunque su tipo falle).
+        self.current_function['has_return'] = True
+
+        expected_type = self.current_function.get('return_type', 'void')
+
+        expr_type, _ = ('error', None)
+        if isinstance(p[2], tuple) and len(p[2]) == 2:
+            expr_type, _ = p[2]
+
+        if expr_type == 'error':
+            can_return = False
+        elif expr_type == 'unknown':
+            can_return = True
+        else:
+            can_return = self._auto_convert(expr_type, expected_type)
+
+        if not can_return:
+            self.has_semantic_error = True
+            func_name = self.current_function.get('name', '?')
+            print(f"[ERROR SEMANTICO] Linea {line}: Return de tipo '{expr_type}' no compatible con función '{func_name}' de tipo '{expected_type}'")
+            return
 
     # Reconoce declaraciones de variables simples o con inicialización.
     def p_declaracion_variable(self, p):
@@ -439,6 +719,11 @@ class ParserClass:
         type_name = p[1]
         line = p.lineno(2)
         scope = self.stack[-1]
+
+        if not self._es_tipo_valido(type_name):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{type_name}' no existe")
+            return
 
         # --- Es una lista de declaraciones: int a, b, c ---
         if len(p) == 3:
@@ -504,12 +789,14 @@ class ParserClass:
             print(f"[ERROR SEMANTICO] Linea {line}: Lado izquierdo de asignación inválido")
             return
 
-        if left.get('kind') != 'var':
-            # La semántica de asignación a campos de registros se completa en el siguiente paso.
+        left_kind = left.get('kind')
+        if left_kind not in ('var', 'field'):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Lado izquierdo de asignación inválido")
             return
 
-        id_name = left['name']
-        type_name = left['type']
+        id_name = left.get('name', '?')
+        type_name = left.get('type', 'error')
 
         expr_type, expr_val = ('error', None)
         if isinstance(p[3], tuple) and len(p[3]) == 2:
@@ -536,12 +823,61 @@ class ParserClass:
             elif type_name == 'int' and expr_type == 'char':
                 expr_val = int(expr_val)
 
-        self._actualizar_simbolo(id_name, expr_val)
+        if left_kind == 'var':
+            self._actualizar_simbolo(id_name, expr_val)
+            return
+
+        root_name = left.get('root')
+        path = left.get('path', [])
+        if not root_name or not path:
+            return
+
+        root_symbol = self._buscar_simbolo(root_name)
+        if root_symbol is None:
+            return
+
+        _, root_value = root_symbol
+        if root_value is None:
+            return
+
+        if not isinstance(root_value, dict):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se puede acceder a campos sobre '{root_name}'")
+            return
+
+        target = root_value
+        for field in path[:-1]:
+            if not isinstance(target, dict):
+                target = None
+                break
+            target = target.get(field)
+
+        if isinstance(target, dict):
+            target[path[-1]] = expr_val
+            self._actualizar_simbolo(root_name, root_value)
 
     # Reconoce una llamada a la función del sistema print.
     def p_print_stmt(self, p):
         '''print_stmt : PRINT LPAREN argumentos_opt RPAREN'''
-        pass
+        args = p[3] if isinstance(p[3], list) else []
+        line = p.lineno(1)
+
+        if len(args) == 0:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: 'print' requiere al menos un argumento")
+            return
+
+        for arg in args:
+            if not (isinstance(arg, tuple) and len(arg) == 2):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Argumento inválido en 'print'")
+                return
+
+            arg_type, _ = arg
+            if arg_type == 'error':
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: Argumento inválido en 'print'")
+                return
 
     # =======================================
     # REGISTROS Y FUNCIONES
@@ -550,41 +886,90 @@ class ParserClass:
     # Reconoce una declaración global de registro.
     def p_declaracion_record(self, p):
         '''declaracion_record : RECORD ID LPAREN campos_record_opt RPAREN'''
-        pass
+        record_name = p[2]
+        fields = p[4] if isinstance(p[4], list) else []
+        line = p.lineno(2)
+
+        if record_name in self.records:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El registro '{record_name}' ya fue declarado")
+            return
+
+        record_schema = {}
+        has_local_error = False
+
+        for field_type, field_name in fields:
+            if field_name in record_schema:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: El campo '{field_name}' está repetido en el registro '{record_name}'")
+                has_local_error = True
+                continue
+
+            if not self._es_tipo_valido(field_type):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{field_type}' no existe para el campo '{field_name}'")
+                has_local_error = True
+                continue
+
+            record_schema[field_name] = field_type
+
+        if not has_local_error:
+            self.records[record_name] = record_schema
 
     # Permite que la lista de campos de un registro sea vacía u opcional.
     def p_campos_record_opt(self, p):
         '''campos_record_opt : lambda
                             | campos_record'''
-        pass
+        if len(p) == 2 and p.slice[1].type == 'lambda':
+            p[0] = []
+        else:
+            p[0] = p[1]
 
     # Construye la lista de campos de un registro.
     def p_campos_record(self, p):
         '''campos_record : campos_record COMMA campo_record
                        | campo_record'''
-        pass
+        if len(p) == 2:
+            p[0] = [p[1]]
+        else:
+            p[0] = p[1] + [p[3]]
 
     # Reconoce un campo individual dentro de un registro.
     def p_campo_record(self, p):
         '''campo_record : tipo ID'''
-        pass
+        p[0] = (p[1], p[2])
 
     # Permite que la lista de parámetros de una función sea vacía u opcional.
     def p_parametros_opt(self, p):
         '''parametros_opt : lambda
                          | parametros'''
-        pass
+        if len(p) == 2 and p.slice[1].type == 'lambda':
+            p[0] = []
+        else:
+            p[0] = p[1]
 
     # Construye la lista de parámetros tipados de una función.
     def p_parametros(self, p):
         '''parametros : parametros COMMA parametro
                      | parametro'''
-        pass
+        if len(p) == 2:
+            p[0] = [p[1]]
+        else:
+            p[0] = p[1] + [p[3]]
 
     # Reconoce un parámetro individual de una función.
     def p_parametro(self, p):
         '''parametro : tipo ID'''
-        pass
+        type_name, id_name = p[1], p[2]
+        line = p.lineno(2)
+
+        if not self._es_tipo_valido(type_name):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{type_name}' no existe para el parámetro '{id_name}'")
+            p[0] = ('error', id_name)
+            return
+
+        p[0] = (type_name, id_name)
 
     # Reconoce un tipo básico o el nombre de un registro definido por el usuario.
     def p_tipo(self, p):
@@ -832,42 +1217,213 @@ class ParserClass:
                 'kind': 'var',
                 'name': var_name,
                 'type': symbol[0],
-                'value': symbol[1]
+                'value': symbol[1],
+                'root': var_name,
+                'path': []
             }
             return
 
-        # La resolución tipada de campos de registro se implementa en el siguiente paso.
         left_access = p[1]
         field_name = p[3]
-        base_name = left_access.get('name', '?') if isinstance(left_access, dict) else '?'
+        line = getattr(p.slice[3], 'lineno', '?')
+
+        if not isinstance(left_access, dict):
+            p[0] = {'kind': 'invalid', 'name': field_name, 'type': 'error', 'value': None}
+            return
+
+        left_type = left_access.get('type', 'error')
+        if left_type not in self.records:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{left_type}' no tiene el campo '{field_name}'")
+            p[0] = {
+                'kind': 'invalid',
+                'name': f"{left_access.get('name', '?')}.{field_name}",
+                'type': 'error',
+                'value': None
+            }
+            return
+
+        if field_name not in self.records[left_type]:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El registro '{left_type}' no tiene el campo '{field_name}'")
+            p[0] = {
+                'kind': 'invalid',
+                'name': f"{left_access.get('name', '?')}.{field_name}",
+                'type': 'error',
+                'value': None
+            }
+            return
+
+        field_type = self.records[left_type][field_name]
+        field_value = None
+        left_value = left_access.get('value')
+        if isinstance(left_value, dict):
+            field_value = left_value.get(field_name)
+
+        root_name = left_access.get('root', left_access.get('name', '?'))
+        base_path = left_access.get('path', [])
+        new_path = base_path + [field_name]
+
         p[0] = {
             'kind': 'field',
-            'name': f"{base_name}.{field_name}",
-            'type': 'unknown',
-            'value': None
+            'name': f"{left_access.get('name', '?')}.{field_name}",
+            'type': field_type,
+            'value': field_value,
+            'root': root_name,
+            'path': new_path
         }
 
     # Reconoce llamadas a funciones con argumentos opcionales.
     def p_llamada(self, p):
         '''llamada : ID LPAREN argumentos_opt RPAREN'''
-        pass
+        func_name = p[1]
+        args = p[3] if isinstance(p[3], list) else []
+        line = p.lineno(1)
+
+        if self.current_function is not None and func_name == self.current_function.get('name'):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No se permite invocar '{func_name}' dentro de su propio cuerpo")
+            p[0] = ('error', None)
+            return
+
+        if func_name not in self.functions:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: La función '{func_name}' no existe")
+            p[0] = ('error', None)
+            return
+
+        arg_types = []
+        for arg in args:
+            if isinstance(arg, tuple) and len(arg) == 2:
+                arg_types.append(arg[0])
+            else:
+                arg_types.append('error')
+
+        if 'error' in arg_types:
+            p[0] = ('error', None)
+            return
+
+        candidates = []
+        for signature in self.functions[func_name]:
+            params = signature.get('params', [])
+            if len(params) != len(arg_types):
+                continue
+
+            conversions = 0
+            compatible = True
+            for arg_type, (param_type, _) in zip(arg_types, params):
+                if arg_type == param_type:
+                    continue
+
+                if arg_type == 'unknown':
+                    conversions += 3
+                    continue
+
+                conversion_cost = self._costo_conversion(arg_type, param_type)
+                if conversion_cost is not None:
+                    conversions += conversion_cost
+                else:
+                    compatible = False
+                    break
+
+            if compatible:
+                candidates.append((conversions, signature))
+
+        if not candidates:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: No existe una sobrecarga compatible para '{func_name}'")
+            p[0] = ('error', None)
+            return
+
+        exact = [signature for conversions, signature in candidates if conversions == 0]
+        if len(exact) == 1:
+            selected = exact[0]
+            p[0] = (selected.get('return_type', 'unknown'), None)
+            return
+
+        if len(exact) > 1:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Llamada ambigua a '{func_name}'")
+            p[0] = ('error', None)
+            return
+
+        min_conversions = min(conversions for conversions, _ in candidates)
+        best = [signature for conversions, signature in candidates if conversions == min_conversions]
+        if len(best) != 1:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: Llamada ambigua a '{func_name}'")
+            p[0] = ('error', None)
+            return
+
+        selected = best[0]
+        p[0] = (selected.get('return_type', 'unknown'), None)
 
     # Reconoce la instanciación de registros mediante new.
     def p_instanciacion(self, p):
         '''instanciacion : NEW ID LPAREN argumentos_opt RPAREN'''
-        pass
+        record_name = p[2]
+        args = p[4] if isinstance(p[4], list) else []
+        line = p.lineno(1)
+
+        if record_name not in self.records:
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: El registro '{record_name}' no existe")
+            p[0] = ('error', None)
+            return
+
+        field_items = list(self.records[record_name].items())
+        if len(args) != len(field_items):
+            self.has_semantic_error = True
+            print(f"[ERROR SEMANTICO] Linea {line}: La instanciación de '{record_name}' requiere {len(field_items)} argumentos y recibió {len(args)}")
+            p[0] = ('error', None)
+            return
+
+        instance = {'__record_type__': record_name}
+        has_local_error = False
+
+        for (field_name, field_type), arg in zip(field_items, args):
+            arg_type, arg_value = ('error', None)
+            if isinstance(arg, tuple) and len(arg) == 2:
+                arg_type, arg_value = arg
+
+            if arg_type == 'error':
+                has_local_error = True
+                continue
+
+            if arg_type != 'unknown' and not (arg_type == field_type or self._auto_convert(arg_type, field_type)):
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: El argumento para '{field_name}' no es compatible con tipo '{field_type}'")
+                has_local_error = True
+                continue
+
+            if arg_value is not None and arg_type != field_type:
+                arg_value = self._convertir_numero(arg_value, arg_type, field_type)
+
+            instance[field_name] = arg_value
+
+        if has_local_error:
+            p[0] = ('error', None)
+            return
+
+        p[0] = (record_name, instance)
 
     # Permite que la lista de argumentos de una llamada sea vacía u opcional.
     def p_argumentos_opt(self, p):
         '''argumentos_opt : lambda
                          | argumentos'''
-        pass
+        if len(p) == 2 and p.slice[1].type == 'lambda':
+            p[0] = []
+        else:
+            p[0] = p[1]
 
     # Construye la lista de argumentos de una llamada o instanciación.
     def p_argumentos(self, p):
         '''argumentos : argumentos COMMA expresion
                      | expresion'''
-        pass
+        if len(p) == 2:
+            p[0] = [p[1]]
+        else:
+            p[0] = p[1] + [p[3]]
 
     # Reconoce los literales básicos del lenguaje.
     def p_literal(self, p):

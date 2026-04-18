@@ -109,9 +109,12 @@ def main():
         parser = ParserClass()
         parser.parse(data)
 
-        # Si el parser ha marcado que hubo error sintáctico, termina con código de error.
-        if parser.has_syntax_error:
+        # Si el parser ha marcado errores sintácticos o semánticos, termina con código de error.
+        if parser.has_syntax_error or parser.has_semantic_error:
             sys.exit(1)
+
+        # Si el análisis ha sido correcto, exporta las tablas semánticas.
+        parser.exportar_tablas_semanticas(entrada)
 
     except Exception as e:
         # Captura errores inesperados al crear o ejecutar el parser.
