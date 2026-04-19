@@ -1,3 +1,5 @@
+record Point(float x1, x2);
+Point p = new Point(1.0, 2.0);
 record Vector(float x, float y);
 record Planet(Vector position, Vector velocity, float mass, boolean active);
 // Actualiza la posición utilizando la velocidad

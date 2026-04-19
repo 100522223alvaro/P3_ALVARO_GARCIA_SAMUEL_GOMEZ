@@ -174,8 +174,17 @@ class ParserClass:
         if value is None:
             return value
 
+        # Guard: empty char defaults to numeric 0
+        if source_type == 'char' and isinstance(value, str) and len(value) == 0:
+            if target_type == 'char':
+                return 0
+            if target_type == 'int':
+                return 0
+            if target_type == 'float':
+                return 0.0
+            return 0
+
         if source_type == target_type:
-            # Para operar/comparar numéricamente dos char, se usa su código ASCII.
             if source_type == 'char' and target_type == 'char':
                 if isinstance(value, str) and len(value) == 1:
                     return ord(value)
@@ -581,7 +590,7 @@ class ParserClass:
 
     # Reconoce una sentencia do-while dentro de una función void.
     def p_sentencia_do_while_void(self, p):
-        '''sentencia_do_while_void : DO entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN'''
+        '''sentencia_do_while_void : DO entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
         self._tiene_flujo_o_funciones = True
         self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
 
@@ -651,7 +660,7 @@ class ParserClass:
 
     # Reconoce una sentencia do-while general del lenguaje.
     def p_sentencia_do_while(self, p):
-        '''sentencia_do_while : DO entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN'''
+        '''sentencia_do_while : DO entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
         self._tiene_flujo_o_funciones = True
         self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
 
@@ -1031,6 +1040,11 @@ class ParserClass:
                 return
 
             result_type = self._tipo_numerico_comun(left_type, right_type)
+
+            # * and / do not accept char; promote to int
+            if operator_type in ('TIMES', 'DIVIDE') and result_type == 'char':
+                result_type = 'int'
+                
             result_value = None
 
             if left_value is not None and right_value is not None:
