@@ -60,14 +60,32 @@ class ParserClass:
         # Contexto de análisis semántico.
         self.current_function = None
         self.loop_depth = 0
-        self._tiene_flujo_o_funciones = False
-        self._decl_tipo_actual = None
-        self._decl_id_actual = None
-        self._decl_linea_actual = '?'
+        self._has_flow = False
+        
+        self._decl_type = None
+        self._decl_name = None
+        self._decl_line = '?'
 
         # Construye el parser de PLY a partir de las reglas de esta clase.
         self.parser = yacc.yacc(module=self)
+    
+    # =========================================================
+    # MÉTODOS DE ENTRADA
+    # =========================================================
 
+    def parse(self, data: str):
+        """Analiza una cadena de entrada."""
+        # Reinicia el indicador de error antes de cada análisis.
+        self.has_syntax_error = False
+        self._reiniciar_estado_semantico()
+
+        # Crea un lexer nuevo para esta entrada concreta.
+        lexer_instance = LexerClass()
+        lexer_instance.input(data)
+
+        # Ejecuta el parser usando el lexer recién inicializado.
+        return self.parser.parse(lexer=lexer_instance.lexer)
+    
     def _reiniciar_estado_semantico(self):
         """Reinicia tablas y estado semántico para un nuevo parse."""
         self.has_semantic_error = False
@@ -77,13 +95,13 @@ class ParserClass:
         self.stack = [self.symbols]
         self.current_function = None
         self.loop_depth = 0
-        self._tiene_flujo_o_funciones = False
-        self._decl_tipo_actual = None
-        self._decl_id_actual = None
-        self._decl_linea_actual = '?'
+        self._has_flow = False
+        self._decl_type = None
+        self._decl_name = None
+        self._decl_line = '?'
 
     # =========================================================
-    # UTILIDADES SEMÁNTICAS BÁSICAS 
+    # MÉTODOS DE GESTIÓN DE LA TABLA DE SÍMBOLOS
     # =========================================================
 
     def _buscar_simbolo(self, name):
@@ -101,6 +119,16 @@ class ParserClass:
                 elem[name] = (symbol_type, value)
                 return True
         return False
+
+    # =========================================================
+    # MÉTODOS DE COMPROBACIÓN Y CONVERSIÓN DE TIPOS
+    # =========================================================
+
+    def _es_tipo_valido(self, type_name):
+        return type_name in self.DEFAULT_TYPES or type_name in self.records
+
+    def _es_tipo_numerico(self, type_name):
+        return type_name in ('char', 'int', 'float')
 
     def _auto_convert(self, source_type: str, target_type: str):
         """Reglas de conversión automática ."""
@@ -122,46 +150,6 @@ class ParserClass:
         if source_type == 'char' and target_type == 'float':
             return 2
         return None
-
-    def _valor_por_defecto(self, type_name: str, visited=None):
-        if type_name in self.DEFAULT_TYPES:
-            return self.DEFAULT_TYPES[type_name]
-
-        if type_name not in self.records:
-            return None
-
-        if visited is None:
-            visited = set()
-        if type_name in visited:
-            return None
-
-        visited = visited | {type_name}
-        record_instance = {'__record_type__': type_name}
-        for field_name, field_type in self.records[type_name].items():
-            record_instance[field_name] = self._valor_por_defecto(field_type, visited)
-
-        return record_instance
-
-    def _es_tipo_valido(self, type_name):
-        return type_name in self.DEFAULT_TYPES or type_name in self.records
-
-    def _registrar_firma_funcion(self, func_name, params, return_type, line='?'):
-        if func_name not in self.functions:
-            self.functions[func_name] = []
-
-        param_types = [param_type for param_type, _ in params]
-        for signature in self.functions[func_name]:
-            signature_types = [param_type for param_type, _ in signature.get('params', [])]
-            if signature_types == param_types:
-                self.has_semantic_error = True
-                print(f"[ERROR SEMANTICO] Linea {line}: La función '{func_name}' con esa firma ya fue declarada")
-                return False
-
-        self.functions[func_name].append({'params': params, 'return_type': return_type})
-        return True
-
-    def _es_tipo_numerico(self, type_name):
-        return type_name in ('char', 'int', 'float')
 
     def _tipo_numerico_comun(self, left_type, right_type):
         if 'float' in (left_type, right_type):
@@ -209,6 +197,44 @@ class ParserClass:
         left_num = self._convertir_numero(left_value, left_type, common_type)
         right_num = self._convertir_numero(right_value, right_type, common_type)
         return common_type, left_num, right_num
+    
+    def _convertir_valor_asignacion(self, value, source_type, target_type):
+        """Converts a value to match the target type during assignment."""
+        if value is None or source_type == target_type:
+            return value
+
+        if source_type == 'char' and isinstance(value, str):
+            value = ord(value) if len(value) == 1 else 0
+
+        if target_type == 'float' and source_type in ('char', 'int'):
+            return float(value)
+        elif target_type == 'int' and source_type == 'char':
+            return int(value)
+
+        return value
+
+    def _valor_por_defecto(self, type_name: str, visited=None):
+        if type_name in self.DEFAULT_TYPES:
+            return self.DEFAULT_TYPES[type_name]
+
+        if type_name not in self.records:
+            return None
+
+        if visited is None:
+            visited = set()
+        if type_name in visited:
+            return None
+
+        visited = visited | {type_name}
+        record_instance = {'__record_type__': type_name}
+        for field_name, field_type in self.records[type_name].items():
+            record_instance[field_name] = self._valor_por_defecto(field_type, visited)
+
+        return record_instance
+
+    # =========================================================
+    # MÉTODOS DE VALIDACIÓN SEMÁNTICA
+    # =========================================================
 
     def _condicion_es_valida(self, expr, line, contexto):
         expr_type = 'error'
@@ -222,6 +248,25 @@ class ParserClass:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: La condición de '{contexto}' debe ser de tipo 'boolean' y recibió '{expr_type}'")
         return False
+
+    def _registrar_firma_funcion(self, func_name, params, return_type, line='?'):
+        if func_name not in self.functions:
+            self.functions[func_name] = []
+
+        param_types = [param_type for param_type, _ in params]
+        for signature in self.functions[func_name]:
+            signature_types = [param_type for param_type, _ in signature.get('params', [])]
+            if signature_types == param_types:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: La función '{func_name}' con esa firma ya fue declarada")
+                return False
+
+        self.functions[func_name].append({'params': params, 'return_type': return_type})
+        return True
+
+    # =========================================================
+    # MÉTODOS DE EXPORTACIÓN DE TABLAS (FICHEROS DE SALIDA)
+    # =========================================================
 
     def _formatear_valor(self, value):
         if isinstance(value, bool):
@@ -244,7 +289,7 @@ class ParserClass:
         records_path = base + '.records'
         functions_path = base + '.functions'
 
-        usar_solo_tipos = self._tiene_flujo_o_funciones or bool(self.functions)
+        usar_solo_tipos = self._has_flow or bool(self.functions)
 
         with open(symbols_path, 'w', encoding='utf-8') as out_symbols:
             for name, (type_name, value) in self.symbols.items():
@@ -265,41 +310,7 @@ class ParserClass:
                     params_txt = ','.join(f"{param_name}:{param_type}" for param_type, param_name in params)
                     return_type = signature.get('return_type', 'void')
                     out_functions.write(f"{function_name}:[{params_txt}],{return_type}\n")
-    
-    # =========================================================
-    # MÉTODOS DE ENTRADA
-    # =========================================================
- 
-    def parse(self, data: str):
-        """Analiza una cadena de entrada."""
-        # Reinicia el indicador de error antes de cada análisis.
-        self.has_syntax_error = False
-        self._reiniciar_estado_semantico()
 
-        # Crea un lexer nuevo para esta entrada concreta.
-        lexer_instance = LexerClass()
-        lexer_instance.input(data)
-
-        # Ejecuta el parser usando el lexer recién inicializado.
-        return self.parser.parse(lexer=lexer_instance.lexer)
- 
-    def test_with_file(self, path: str):
-        """Analiza el contenido de un fichero."""
-        # Si no se indica ruta, usa "input" por defecto.
-        if not path:
-            path = "input"
-        try:
-            # Abre el fichero y analiza su contenido completo.
-            with open(path, "r", encoding="utf-8") as fichero:
-                return self.parse(fichero.read())
-        except FileNotFoundError:
-            # Error específico si el fichero no existe.
-            print("ERROR: Fichero no encontrado")
-        except Exception as e:
-            # Captura cualquier otro error inesperado.
-            print("ERROR: error inesperado:", e)
-
-    
     # =========================================================
     # REGLAS DE PRODUCCIÓN
     # =========================================================
@@ -350,7 +361,7 @@ class ParserClass:
         params = p[-2] if isinstance(p[-2], list) else []
         line = getattr(p.lexer, 'lineno', '?')
 
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
 
         if any(param_type == 'error' for param_type, _ in params):
             self.has_semantic_error = True
@@ -358,15 +369,15 @@ class ParserClass:
         else:
             self._registrar_firma_funcion(func_name, params, 'void', line)
 
-        func_scope = {}
+        func_current = {}
         for param_type, param_name in params:
-            if param_name in func_scope:
+            if param_name in func_current:
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Parámetro '{param_name}' repetido en la función '{func_name}'")
             else:
-                func_scope[param_name] = (param_type, None)
+                func_current[param_name] = (param_type, None)
 
-        self.stack.append(func_scope)
+        self.stack.append(func_current)
         self.current_function = {
             'name': func_name,
             'return_type': 'void',
@@ -384,14 +395,14 @@ class ParserClass:
         '''declaracion_o_funcion_tipada : tipo ID marcar_declaracion_tipada resto_tipado_programa'''
         type_name, id_name, info = p[1], p[2], p[4]
         line = p.lineno(2)
-        scope = self.stack[-1]
+        current = self.stack[-1]
 
         if not self._es_tipo_valido(type_name):
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: El tipo '{type_name}' no existe")
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
         # --- Es una función tipada ---
@@ -399,37 +410,37 @@ class ParserClass:
             if not info.get('has_return', False):
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: La función '{id_name}' debe retornar un valor de tipo '{type_name}'")
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
         # --- Es una lista de declaraciones: int a, b, c ---
         if info.get('kind') == 'decl_list':
             for name in [id_name] + info.get('ids', []):
-                if name in scope:
+                if name in current:
                     self.has_semantic_error = True
                     print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
                 else:
-                    scope[name] = (type_name, self._valor_por_defecto(type_name))
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+                    current[name] = (type_name, self._valor_por_defecto(type_name))
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
         # --- Es una declaración con inicialización: int a = expr ---
         if info.get('kind') != 'init':
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
-        if id_name in scope:
+        if id_name in current:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: Variable '{id_name}' ya declarada en este ámbito")
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
         expr_type, expr_val = info.get('expr', ('error', None))
@@ -444,30 +455,24 @@ class ParserClass:
         if not can_assign:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: No se puede asignar tipo '{expr_type}' a '{id_name}' de tipo '{type_name}'")
-            self._decl_tipo_actual = None
-            self._decl_id_actual = None
-            self._decl_linea_actual = '?'
+            self._decl_type = None
+            self._decl_name = None
+            self._decl_line = '?'
             return
 
         # Conversión de valor si los tipos difieren pero son compatibles
-        if expr_val is not None and expr_type != type_name:
-            if expr_type == 'char' and isinstance(expr_val, str):
-                expr_val = ord(expr_val)
-            if type_name == 'float' and expr_type in ('char', 'int'):
-                expr_val = float(expr_val)
-            elif type_name == 'int' and expr_type == 'char':
-                expr_val = int(expr_val)
+        expr_val = self._convertir_valor_asignacion(expr_val, expr_type, type_name)
 
-        scope[id_name] = (type_name, expr_val)
-        self._decl_tipo_actual = None
-        self._decl_id_actual = None
-        self._decl_linea_actual = '?'
+        current[id_name] = (type_name, expr_val)
+        self._decl_type = None
+        self._decl_name = None
+        self._decl_line = '?'
 
     def p_marcar_declaracion_tipada(self, p):
         '''marcar_declaracion_tipada :'''
-        self._decl_tipo_actual = p[-2]
-        self._decl_id_actual = p[-1]
-        self._decl_linea_actual = getattr(p.lexer, 'lineno', '?')
+        self._decl_type = p[-2]
+        self._decl_name = p[-1]
+        self._decl_line = getattr(p.lexer, 'lineno', '?')
 
     # Desambigua si un elemento tipado es función o declaración de variable global.
     def p_resto_tipado_programa(self, p):
@@ -483,12 +488,12 @@ class ParserClass:
 
     def p_inicio_funcion_tipada(self, p):
         '''inicio_funcion_tipada :'''
-        return_type = self._decl_tipo_actual
-        func_name = self._decl_id_actual
+        return_type = self._decl_type
+        func_name = self._decl_name
         params = p[-2] if isinstance(p[-2], list) else []
-        line = self._decl_linea_actual
+        line = self._decl_line
 
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
 
         if any(param_type == 'error' for param_type, _ in params):
             self.has_semantic_error = True
@@ -496,15 +501,15 @@ class ParserClass:
         else:
             self._registrar_firma_funcion(func_name, params, return_type, line)
 
-        func_scope = {}
+        func_current = {}
         for param_type, param_name in params:
-            if param_name in func_scope:
+            if param_name in func_current:
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Parámetro '{param_name}' repetido en la función '{func_name}'")
             else:
-                func_scope[param_name] = (param_type, None)
+                func_current[param_name] = (param_type, None)
 
-        self.stack.append(func_scope)
+        self.stack.append(func_current)
         self.current_function = {
             'name': func_name,
             'return_type': return_type,
@@ -573,7 +578,7 @@ class ParserClass:
     # Reconoce una sentencia if dentro de una función void.
     def p_sentencia_if_void(self, p):
         '''sentencia_if_void : IF LPAREN expresion RPAREN bloque_void else_void_opt'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[3], p.lineno(1), 'if')
 
     # Reconoce la cláusula else opcional dentro de una función void.
@@ -585,13 +590,13 @@ class ParserClass:
     # Reconoce una sentencia while dentro de una función void.
     def p_sentencia_while_void(self, p):
         '''sentencia_while_void : WHILE LPAREN expresion RPAREN entrar_bucle bloque_void salir_bucle'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[3], p.lineno(1), 'while')
 
     # Reconoce una sentencia do-while dentro de una función void.
     def p_sentencia_do_while_void(self, p):
         '''sentencia_do_while_void : DO entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
 
     # Reconoce sentencias simples válidas dentro de una función void.
@@ -643,7 +648,7 @@ class ParserClass:
     # Reconoce una sentencia if general del lenguaje.
     def p_sentencia_if(self, p):
         '''sentencia_if : IF LPAREN expresion RPAREN bloque else_opt'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[3], p.lineno(1), 'if')
 
     # Reconoce la cláusula else opcional en un if general.
@@ -655,13 +660,13 @@ class ParserClass:
     # Reconoce una sentencia while general del lenguaje.
     def p_sentencia_while(self, p):
         '''sentencia_while : WHILE LPAREN expresion RPAREN entrar_bucle bloque salir_bucle'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[3], p.lineno(1), 'while')
 
     # Reconoce una sentencia do-while general del lenguaje.
     def p_sentencia_do_while(self, p):
         '''sentencia_do_while : DO entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
-        self._tiene_flujo_o_funciones = True
+        self._has_flow = True
         self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
 
     def p_entrar_bucle(self, p):
@@ -727,7 +732,7 @@ class ParserClass:
                                | tipo ID ASSIGN expresion'''
         type_name = p[1]
         line = p.lineno(2)
-        scope = self.stack[-1]
+        current = self.stack[-1]
 
         if not self._es_tipo_valido(type_name):
             self.has_semantic_error = True
@@ -737,11 +742,11 @@ class ParserClass:
         # --- Es una lista de declaraciones: int a, b, c ---
         if len(p) == 3:
             for name in p[2]:
-                if name in scope:
+                if name in current:
                     self.has_semantic_error = True
                     print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
                 else:
-                    scope[name] = (type_name, self._valor_por_defecto(type_name))
+                    current[name] = (type_name, self._valor_por_defecto(type_name))
             return
 
         # --- Es una declaración con inicialización: int a = expr ---
@@ -750,7 +755,7 @@ class ParserClass:
         if isinstance(p[4], tuple) and len(p[4]) == 2:
             expr_type, expr_val = p[4]
 
-        if id_name in scope:
+        if id_name in current:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: Variable '{id_name}' ya declarada en este ámbito")
             return
@@ -768,15 +773,9 @@ class ParserClass:
             return
 
         # Conversión de valor si los tipos difieren pero son compatibles
-        if expr_val is not None and expr_type != type_name:
-            if expr_type == 'char' and isinstance(expr_val, str):
-                expr_val = ord(expr_val)
-            if type_name == 'float' and expr_type in ('char', 'int'):
-                expr_val = float(expr_val)
-            elif type_name == 'int' and expr_type == 'char':
-                expr_val = int(expr_val)
+        expr_val = self._convertir_valor_asignacion(expr_val, expr_type, type_name)
 
-        scope[id_name] = (type_name, expr_val)
+        current[id_name] = (type_name, expr_val)
 
     # Reconoce una lista de identificadores separada por comas.
     def p_lista_ids(self, p):
@@ -824,13 +823,7 @@ class ParserClass:
             return
 
         # Conversión de valor si los tipos difieren pero son compatibles
-        if expr_val is not None and expr_type != type_name:
-            if expr_type == 'char' and isinstance(expr_val, str):
-                expr_val = ord(expr_val)
-            if type_name == 'float' and expr_type in ('char', 'int'):
-                expr_val = float(expr_val)
-            elif type_name == 'int' and expr_type == 'char':
-                expr_val = int(expr_val)
+        expr_val = self._convertir_valor_asignacion(expr_val, expr_type, type_name)
 
         if left_kind == 'var':
             self._actualizar_simbolo(id_name, expr_val)
@@ -896,7 +889,7 @@ class ParserClass:
     def p_declaracion_record(self, p):
         '''declaracion_record : RECORD ID LPAREN campos_record_opt RPAREN'''
         record_name = p[2]
-        fields = p[4] if isinstance(p[4], list) else []
+        raw_fields = p[4] if isinstance(p[4], list) else []
         line = p.lineno(2)
 
         if record_name in self.records:
@@ -904,10 +897,22 @@ class ParserClass:
             print(f"[ERROR SEMANTICO] Linea {line}: El registro '{record_name}' ya fue declarado")
             return
 
+        # Resolve inherited types for bare IDs
+        resolved_fields = []
+        current_type = None
+        for field_type, field_name in raw_fields:
+            if field_type is not None:
+                current_type = field_type
+            if current_type is None:
+                self.has_semantic_error = True
+                print(f"[ERROR SEMANTICO] Linea {line}: El campo '{field_name}' no tiene tipo definido")
+                continue
+            resolved_fields.append((current_type, field_name))
+
         record_schema = {}
         has_local_error = False
 
-        for field_type, field_name in fields:
+        for field_type, field_name in resolved_fields:
             if field_name in record_schema:
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: El campo '{field_name}' está repetido en el registro '{record_name}'")
@@ -936,17 +941,20 @@ class ParserClass:
 
     # Construye la lista de campos de un registro.
     def p_campos_record(self, p):
-        '''campos_record : campos_record COMMA campo_record
-                       | campo_record'''
+        '''campos_record : campos_record COMMA campo_record_item
+                     | campo_record_item'''
         if len(p) == 2:
             p[0] = [p[1]]
         else:
             p[0] = p[1] + [p[3]]
 
-    # Reconoce un campo individual dentro de un registro.
-    def p_campo_record(self, p):
-        '''campo_record : tipo ID'''
+    def p_campo_record_item_typed(self, p):
+        '''campo_record_item : tipo ID'''
         p[0] = (p[1], p[2])
+
+    def p_campo_record_item_bare(self, p):
+        '''campo_record_item : ID'''
+        p[0] = (None, p[1])   # type will be inferred
 
     # Permite que la lista de parámetros de una función sea vacía u opcional.
     def p_parametros_opt(self, p):
