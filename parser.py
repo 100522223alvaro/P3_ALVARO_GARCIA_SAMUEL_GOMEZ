@@ -70,6 +70,18 @@ class ParserClass:
         self._decl_name = None
         self._decl_line = '?'
 
+        # Estructuras para la generación de cuartetos.
+        # Almacena los cuartetos emitidos durante el parseo.
+        self.quartets = []
+        # Cuenta temporales para generar nombres únicos (@T1, @T2, ...).
+        self._temp_counter = 0
+        # Cuenta etiquetas para generar saltos únicos (@L1, @L2, ...).
+        self._label_counter = 0
+        # Guarda el contexto de if/else activos para resolver saltos.
+        self._if_codegen_stack = []
+        # Guarda el contexto de bucles activos para break y cierres.
+        self._loop_codegen_stack = []
+
         # Construye el parser de PLY a partir de las reglas de esta clase.
         self.parser = yacc.yacc(module=self)
     
@@ -103,6 +115,171 @@ class ParserClass:
         self._decl_type = None
         self._decl_name = None
         self._decl_line = '?'
+
+        # Reinicia el estado de generación de cuartetos.
+        self.quartets = []
+        self._temp_counter = 0
+        self._label_counter = 0
+        self._if_codegen_stack = []
+        self._loop_codegen_stack = []
+
+    # =========================================================
+    # MÉTODOS DE APOYO PARA GENERACIÓN DE CUARTETOS
+    # =========================================================
+
+    def _expr(self, type_name, value, ref=None):
+        """Crea un resultado de expresión con referencia opcional."""
+        # Si no llega referencia, intenta derivarla del valor inmediato.
+        if ref is None:
+            ref = self._valor_a_operando(value, type_name)
+
+        # Devuelve la representación canónica usada por el parser.
+        return (type_name, value, ref)
+
+    def _extraer_expr(self, expr):
+        """Extrae tipo, valor y referencia de una expresión."""
+        # Valida el formato mínimo de una expresión tipada.
+        if not (isinstance(expr, tuple) and len(expr) >= 2):
+            return 'error', None, None
+
+        # Obtiene tipo y valor de las dos primeras posiciones.
+        expr_type, expr_value = expr[0], expr[1]
+
+        # Toma la referencia explícita si la tupla la incluye.
+        expr_ref = expr[2] if len(expr) >= 3 else None
+
+        # Si no hay referencia explícita, intenta usar el literal como operando.
+        if expr_ref is None:
+            expr_ref = self._valor_a_operando(expr_value, expr_type)
+
+        return expr_type, expr_value, expr_ref
+
+    def _nuevo_temporal(self):
+        """Genera un nuevo nombre de temporal para cuartetos."""
+        # Incrementa el contador global de temporales.
+        self._temp_counter += 1
+
+        # Construye el identificador con formato @Tn.
+        return f"@T{self._temp_counter}"
+
+    def _nueva_etiqueta(self):
+        """Genera un nuevo nombre de etiqueta para cuartetos."""
+        # Incrementa el contador global de etiquetas.
+        self._label_counter += 1
+
+        # Construye el identificador con formato @Ln.
+        return f"@L{self._label_counter}"
+
+    def _normalizar_operando_cuarteto(self, operand):
+        """Convierte un operando al formato texto usado en .quartets."""
+        # Representa operandos ausentes con el marcador vacío estándar.
+        if operand is None:
+            return '_'
+
+        # Fuerza el formato textual de booleanos en minúsculas.
+        if isinstance(operand, bool):
+            return 'true' if operand else 'false'
+
+        # Serializa cualquier otro operando como cadena.
+        return str(operand)
+
+    def _emit(self, operator, arg1='_', arg2='_', result='_'):
+        """Añade un cuarteto a la lista de salida."""
+        # Normaliza cada campo antes de almacenarlo en el buffer.
+        self.quartets.append(
+            (
+                self._normalizar_operando_cuarteto(operator),
+                self._normalizar_operando_cuarteto(arg1),
+                self._normalizar_operando_cuarteto(arg2),
+                self._normalizar_operando_cuarteto(result),
+            )
+        )
+
+    def _valor_a_operando(self, value, value_type=None):
+        """Convierte un valor inmediato al formato de operando de cuarteto."""
+        # Los valores nulos no generan operando directo.
+        if value is None:
+            return None
+
+        # Serializa booleanos al formato textual del IR.
+        if isinstance(value, bool):
+            return 'true' if value else 'false'
+
+        # Serializa enteros y flotantes sin adornos.
+        if isinstance(value, (int, float)):
+            return str(value)
+
+        # Procesa literales de texto y, en especial, caracteres.
+        if isinstance(value, str):
+            if value_type == 'char':
+                # Escapa barra invertida y comilla simple para el fichero.
+                escaped = value.replace('\\', '\\\\').replace("'", "\\'")
+                return f"'{escaped}'"
+            return value
+
+        # Si no se reconoce el tipo, no se emite operando inmediato.
+        return None
+
+    def _asegurar_tipo_en_cuartetos(self, ref, source_type, target_type):
+        """Inserta conversiones de cuartetos cuando un operando cambia de tipo."""
+        # Si no hay conversión que hacer, conserva la referencia original.
+        if ref is None or source_type == target_type:
+            return ref
+
+        # Convierte char -> int mediante temporal intermedio.
+        if source_type == 'char' and target_type == 'int':
+            temp = self._nuevo_temporal()
+            self._emit('CHAR_TO_INT', ref, '_', temp)
+            return temp
+
+        # Convierte int -> float mediante temporal intermedio.
+        if source_type == 'int' and target_type == 'float':
+            temp = self._nuevo_temporal()
+            self._emit('INT_TO_FLOAT', ref, '_', temp)
+            return temp
+
+        # Convierte char -> float en dos pasos: char->int y luego int->float.
+        if source_type == 'char' and target_type == 'float':
+            temp_int = self._nuevo_temporal()
+            self._emit('CHAR_TO_INT', ref, '_', temp_int)
+            temp_float = self._nuevo_temporal()
+            self._emit('INT_TO_FLOAT', temp_int, '_', temp_float)
+            return temp_float
+
+        # Si la conversión no está modelada en IR, mantiene la referencia.
+        return ref
+
+    def _operador_binario_a_cuarteto(self, operator_type):
+        """Mapea un operador binario de la gramática a su instrucción de cuarteto."""
+        # Tabla de traducción token de gramática -> opcode de cuarteto.
+        mapping = {
+            'PLUS': 'ADD',
+            'MINUS': 'SUB',
+            'TIMES': 'MUL',
+            'DIVIDE': 'DIV',
+            'GREATER': 'GT',
+            'GREATER_EQUAL': 'GTE',
+            'LESS': 'LT',
+            'LESS_EQUAL': 'LTE',
+            'EQUAL': 'EQ',
+            'AND': 'AND',
+            'OR': 'OR',
+        }
+
+        # Devuelve el opcode o None si no existe mapeo.
+        return mapping.get(operator_type)
+
+    def _operador_unario_a_cuarteto(self, operator_type):
+        """Mapea un operador unario de la gramática a su instrucción de cuarteto."""
+        # Tabla de traducción para operadores unarios.
+        mapping = {
+            'NOT': 'NOT',
+            'MINUS': 'UMINUS',
+            'PLUS': 'UPLUS',
+        }
+
+        # Devuelve el opcode o None si no existe mapeo.
+        return mapping.get(operator_type)
 
     # =========================================================
     # MÉTODOS DE GESTIÓN DE LA TABLA DE SÍMBOLOS
@@ -280,7 +457,7 @@ class ParserClass:
         expr_type = 'error'
 
         # Extrae el tipo cuando la expresión viene tipada.
-        if isinstance(expr, tuple) and len(expr) == 2:
+        if isinstance(expr, tuple) and len(expr) >= 2:
             expr_type = expr[0]
 
         # Acepta condiciones booleanas o desconocidas.
@@ -373,6 +550,15 @@ class ParserClass:
                     params_txt = ','.join(f"{param_name}:{param_type}" for param_type, param_name in params)
                     return_type = signature.get('return_type', 'void')
                     out_functions.write(f"{function_name}:[{params_txt}],{return_type}\n")
+
+    def exportar_cuartetos(self, input_path):
+        """Exporta los cuartetos generados a un fichero .quartets."""
+        base = os.path.splitext(input_path)[0]
+        quartets_path = base + '.quartets'
+
+        with open(quartets_path, 'w', encoding='utf-8') as out_quartets:
+            for operator, arg1, arg2, result in self.quartets:
+                out_quartets.write(f"{operator},{arg1},{arg2},{result}\n")
 
     # =========================================================
     # REGLAS DE PRODUCCIÓN
@@ -499,7 +685,13 @@ class ParserClass:
                     self.has_semantic_error = True
                     print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
                 else:
-                    current[name] = (type_name, self._valor_por_defecto(type_name))
+                    default_value = self._valor_por_defecto(type_name)
+                    current[name] = (type_name, default_value)
+
+                    # Genera asignación por defecto para tipos básicos.
+                    default_ref = self._valor_a_operando(default_value, type_name)
+                    if default_ref is not None:
+                        self._emit('ASSIGN', default_ref, '_', name)
             self._decl_type = None
             self._decl_name = None
             self._decl_line = '?'
@@ -523,7 +715,7 @@ class ParserClass:
             return
 
         # Obtiene el tipo y valor de la expresión inicial.
-        expr_type, expr_val = info.get('expr', ('error', None))
+        expr_type, expr_val, expr_ref = self._extraer_expr(info.get('expr'))
 
         # Comprueba compatibilidad de tipos para la asignación.
         if expr_type == 'error':
@@ -547,6 +739,17 @@ class ParserClass:
 
         # Guarda la variable declarada y limpia el estado temporal.
         current[id_name] = (type_name, expr_val)
+
+        # Emite asignación en cuartetos cuando la expresión es representable.
+        if expr_ref is None:
+            expr_ref = self._valor_a_operando(expr_val, type_name)
+
+        if expr_ref is not None:
+            assign_ref = expr_ref
+            if expr_type not in ('error', 'unknown'):
+                assign_ref = self._asegurar_tipo_en_cuartetos(expr_ref, expr_type, type_name)
+            self._emit('ASSIGN', assign_ref, '_', id_name)
+
         self._decl_type = None
         self._decl_name = None
         self._decl_line = '?'
@@ -683,7 +886,7 @@ class ParserClass:
 
     # Sentencia if dentro de una función void
     def p_sentencia_if_void(self, p):
-        '''sentencia_if_void : IF LPAREN expresion RPAREN bloque_void else_void_opt'''
+        '''sentencia_if_void : IF LPAREN expresion RPAREN if_mark bloque_void else_void_opt if_end_mark'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del if sea de tipo boolean
@@ -692,24 +895,24 @@ class ParserClass:
     # Reconoce la cláusula else opcional dentro de una función void.
     def p_else_void_opt(self, p):
         '''else_void_opt : lambda
-                        | ELSE bloque_void'''
+                        | else_mark ELSE bloque_void'''
         pass
 
     # Sentencia while dentro de una función void
     def p_sentencia_while_void(self, p):
-        '''sentencia_while_void : WHILE LPAREN expresion RPAREN entrar_bucle bloque_void salir_bucle'''
+        '''sentencia_while_void : WHILE while_start LPAREN expresion RPAREN while_cond_mark entrar_bucle bloque_void salir_bucle while_end'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del while sea de tipo boolean
-        self._condicion_es_valida(p[3], p.lineno(1), 'while')
+        self._condicion_es_valida(p[4], p.lineno(1), 'while')
 
     # Sentencia do-while dentro de una función void
     def p_sentencia_do_while_void(self, p):
-        '''sentencia_do_while_void : DO entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
+        '''sentencia_do_while_void : DO do_start entrar_bucle bloque_void salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON do_end'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del do-while sea de tipo boolean
-        self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
+        self._condicion_es_valida(p[8], p.lineno(6), 'do-while')
 
     # Sentencias simples válidas dentro de una función void
     def p_sentencia_simple_void(self, p):
@@ -721,6 +924,12 @@ class ParserClass:
         if len(p) == 2 and p.slice[1].type == 'BREAK' and self.loop_depth <= 0:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {p.lineno(1)}: 'break' fuera de un bucle")
+            return
+
+        # Si el break es válido, genera salto a la etiqueta de fin de bucle.
+        if len(p) == 2 and p.slice[1].type == 'BREAK' and self._loop_codegen_stack:
+            end_label = self._loop_codegen_stack[-1].get('end')
+            self._emit('JUMP', end_label, '_', '_')
 
     # =======================================
     # BLOQUES Y CONTROL DE FLUJO (con return)
@@ -760,7 +969,7 @@ class ParserClass:
 
     # Sentencia if general del lenguaje.
     def p_sentencia_if(self, p):
-        '''sentencia_if : IF LPAREN expresion RPAREN bloque else_opt'''
+        '''sentencia_if : IF LPAREN expresion RPAREN if_mark bloque else_opt if_end_mark'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del if sea de tipo boolean
@@ -769,24 +978,116 @@ class ParserClass:
     # Sentencia else opcional en un if general.
     def p_else_opt(self, p):
         '''else_opt : lambda
-                   | ELSE bloque'''
+                   | else_mark ELSE bloque'''
         pass
 
     # Sentencia while general del lenguaje.
     def p_sentencia_while(self, p):
-        '''sentencia_while : WHILE LPAREN expresion RPAREN entrar_bucle bloque salir_bucle'''
+        '''sentencia_while : WHILE while_start LPAREN expresion RPAREN while_cond_mark entrar_bucle bloque salir_bucle while_end'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del while sea de tipo boolean
-        self._condicion_es_valida(p[3], p.lineno(1), 'while')
+        self._condicion_es_valida(p[4], p.lineno(1), 'while')
 
     # Sentencia do-while general del lenguaje.
     def p_sentencia_do_while(self, p):
-        '''sentencia_do_while : DO entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON'''
+        '''sentencia_do_while : DO do_start entrar_bucle bloque salir_bucle WHILE LPAREN expresion RPAREN SEMICOLON do_end'''
         # Marca que el programa tiene estructuras de control
         self._has_flow = True
         # Verifica que la condición del do-while sea de tipo boolean
-        self._condicion_es_valida(p[7], p.lineno(5), 'do-while')
+        self._condicion_es_valida(p[8], p.lineno(6), 'do-while')
+
+    # Marca el inicio de un if y emite salto condicional al bloque else.
+    def p_if_mark(self, p):
+        '''if_mark :'''
+        _, _, cond_ref = self._extraer_expr(p[-2])
+
+        else_label = self._nueva_etiqueta()
+        end_label = self._nueva_etiqueta()
+        self._if_codegen_stack.append(
+            {
+                'else_label': else_label,
+                'end_label': end_label,
+                'has_else': False,
+            }
+        )
+
+        if cond_ref is not None:
+            self._emit('JUMPF', cond_ref, else_label, '_')
+
+    # Marca el inicio del bloque else y cierra el bloque then.
+    def p_else_mark(self, p):
+        '''else_mark :'''
+        if not self._if_codegen_stack:
+            return
+
+        ctx = self._if_codegen_stack[-1]
+        self._emit('JUMP', ctx['end_label'], '_', '_')
+        self._emit('LABEL', ctx['else_label'], '_', '_')
+        ctx['has_else'] = True
+
+    # Marca el final de una sentencia if con o sin else.
+    def p_if_end_mark(self, p):
+        '''if_end_mark :'''
+        if not self._if_codegen_stack:
+            return
+
+        ctx = self._if_codegen_stack.pop()
+        if ctx['has_else']:
+            self._emit('LABEL', ctx['end_label'], '_', '_')
+        else:
+            self._emit('LABEL', ctx['else_label'], '_', '_')
+
+    # Marca inicio de bucle while y emite etiqueta de entrada.
+    def p_while_start(self, p):
+        '''while_start :'''
+        start_label = self._nueva_etiqueta()
+        end_label = self._nueva_etiqueta()
+        self._loop_codegen_stack.append({'start': start_label, 'end': end_label, 'kind': 'while'})
+        self._emit('LABEL', start_label, '_', '_')
+
+    # Evalúa condición de while y emite salto al final del bucle.
+    def p_while_cond_mark(self, p):
+        '''while_cond_mark :'''
+        _, _, cond_ref = self._extraer_expr(p[-2])
+
+        if not self._loop_codegen_stack:
+            return
+
+        end_label = self._loop_codegen_stack[-1].get('end')
+        if cond_ref is not None:
+            self._emit('JUMPF', cond_ref, end_label, '_')
+
+    # Cierra bucle while con salto al inicio y etiqueta de salida.
+    def p_while_end(self, p):
+        '''while_end :'''
+        if not self._loop_codegen_stack:
+            return
+
+        ctx = self._loop_codegen_stack.pop()
+        self._emit('JUMP', ctx.get('start'), '_', '_')
+        self._emit('LABEL', ctx.get('end'), '_', '_')
+
+    # Marca inicio de bucle do-while y emite etiqueta del cuerpo.
+    def p_do_start(self, p):
+        '''do_start :'''
+        start_label = self._nueva_etiqueta()
+        end_label = self._nueva_etiqueta()
+        self._loop_codegen_stack.append({'start': start_label, 'end': end_label, 'kind': 'do'})
+        self._emit('LABEL', start_label, '_', '_')
+
+    # Cierra bucle do-while con salto condicional y etiqueta final.
+    def p_do_end(self, p):
+        '''do_end :'''
+        _, _, cond_ref = self._extraer_expr(p[-3])
+
+        if not self._loop_codegen_stack:
+            return
+
+        ctx = self._loop_codegen_stack.pop()
+        if cond_ref is not None:
+            self._emit('JUMPT', cond_ref, ctx.get('start'), '_')
+        self._emit('LABEL', ctx.get('end'), '_', '_')
 
     # Marcador que se ejecuta al entrar en un bucle para controlar el alcance de break.
     def p_entrar_bucle(self, p):
@@ -817,6 +1118,10 @@ class ParserClass:
             if self.loop_depth <= 0:
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {p.lineno(1)}: 'break' fuera de un bucle")
+            elif self._loop_codegen_stack:
+                # Salta al final del bucle más interno.
+                end_label = self._loop_codegen_stack[-1].get('end')
+                self._emit('JUMP', end_label, '_', '_')
             return
 
         # Si no es un return, no hay validaciones adicionales.
@@ -840,8 +1145,8 @@ class ParserClass:
 
         # Recupera el tipo de la expresión retornada.
         expr_type, _ = ('error', None)
-        if isinstance(p[2], tuple) and len(p[2]) == 2:
-            expr_type, _ = p[2]
+        if isinstance(p[2], tuple) and len(p[2]) >= 2:
+            expr_type = p[2][0]
 
         # Decide si el tipo retornado es compatible con la función.
         if expr_type == 'error':
@@ -883,16 +1188,20 @@ class ParserClass:
                     print(f"[ERROR SEMANTICO] Linea {line}: Variable '{name}' ya declarada en este ámbito")
                 else:
                     # Guarda la variable con su valor por defecto.
-                    current[name] = (type_name, self._valor_por_defecto(type_name))
+                    default_value = self._valor_por_defecto(type_name)
+                    current[name] = (type_name, default_value)
+
+                    # Genera asignación por defecto para tipos básicos.
+                    default_ref = self._valor_a_operando(default_value, type_name)
+                    if default_ref is not None:
+                        self._emit('ASSIGN', default_ref, '_', name)
             return
 
         # Maneja una declaración con inicialización como int a = expr.
         id_name = p[2]
 
         # Extrae tipo y valor de la expresión inicial.
-        expr_type, expr_val = ('error', None)
-        if isinstance(p[4], tuple) and len(p[4]) == 2:
-            expr_type, expr_val = p[4]
+        expr_type, expr_val, expr_ref = self._extraer_expr(p[4])
 
         # Evita redeclarar la variable en el mismo ámbito.
         if id_name in current:
@@ -919,6 +1228,16 @@ class ParserClass:
 
         # Guarda la variable con su tipo y valor final.
         current[id_name] = (type_name, expr_val)
+
+        # Emite asignación en cuartetos cuando la expresión es representable.
+        if expr_ref is None:
+            expr_ref = self._valor_a_operando(expr_val, type_name)
+
+        if expr_ref is not None:
+            assign_ref = expr_ref
+            if expr_type not in ('error', 'unknown'):
+                assign_ref = self._asegurar_tipo_en_cuartetos(expr_ref, expr_type, type_name)
+            self._emit('ASSIGN', assign_ref, '_', id_name)
 
     # Reconoce una lista de identificadores separada por comas.
     def p_lista_ids(self, p):
@@ -957,9 +1276,7 @@ class ParserClass:
         type_name = left.get('type', 'error')
 
         # Extrae tipo y valor de la expresión derecha.
-        expr_type, expr_val = ('error', None)
-        if isinstance(p[3], tuple) and len(p[3]) == 2:
-            expr_type, expr_val = p[3]
+        expr_type, expr_val, expr_ref = self._extraer_expr(p[3])
 
         # Comprueba compatibilidad de tipos para la asignación.
         if 'error' in (type_name, expr_type):
@@ -981,6 +1298,16 @@ class ParserClass:
         # Si el destino es una variable simple, actualiza y termina.
         if left_kind == 'var':
             self._actualizar_simbolo(id_name, expr_val)
+
+            # Emite asignación para variables simples.
+            if expr_ref is None:
+                expr_ref = self._valor_a_operando(expr_val, type_name)
+
+            if expr_ref is not None:
+                assign_ref = expr_ref
+                if expr_type not in ('error', 'unknown'):
+                    assign_ref = self._asegurar_tipo_en_cuartetos(expr_ref, expr_type, type_name)
+                self._emit('ASSIGN', assign_ref, '_', id_name)
             return
 
         # Si el destino es un campo, prepara la ruta de acceso.
@@ -1033,17 +1360,23 @@ class ParserClass:
 
         # Revisa cada argumento para asegurar formato y tipo válidos.
         for arg in args:
-            if not (isinstance(arg, tuple) and len(arg) == 2):
+            if not (isinstance(arg, tuple) and len(arg) >= 2):
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Argumento inválido en 'print'")
                 return
 
             # Rechaza argumentos que ya vengan marcados con error.
-            arg_type, _ = arg
+            arg_type, arg_value, arg_ref = self._extraer_expr(arg)
             if arg_type == 'error':
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Argumento inválido en 'print'")
                 return
+
+            # Emite llamada print para argumentos representables.
+            if arg_ref is None:
+                arg_ref = self._valor_a_operando(arg_value, arg_type)
+            if arg_ref is not None:
+                self._emit('PRINT', arg_ref, '_', '_')
 
     # =======================================
     # REGISTROS Y FUNCIONES
@@ -1215,34 +1548,25 @@ class ParserClass:
                     | expresion MINUS expresion
                     | expresion TIMES expresion
                     | expresion DIVIDE expresion'''
-        # Obtiene las dos expresiones que participan en la operación.
-        left_expr, right_expr = p[1], p[3]
+        # Obtiene tipo, valor y referencia de ambos operandos.
+        left_type, left_value, left_ref = self._extraer_expr(p[1])
+        right_type, right_value, right_ref = self._extraer_expr(p[3])
 
-        # Extrae tipo y valor del operando izquierdo.
-        if isinstance(left_expr, tuple) and len(left_expr) == 2:
-            left_type, left_value = left_expr
-        else:
-            left_type, left_value = ('error', None)
-
-        # Extrae tipo y valor del operando derecho.
-        if isinstance(right_expr, tuple) and len(right_expr) == 2:
-            right_type, right_value = right_expr
-        else:
-            right_type, right_value = ('error', None)
-
-        # Obtiene el operador y la línea para mensajes de error.
+        # Obtiene operador y línea para mensajes de error.
         operator_type = p.slice[2].type
         line = getattr(p.slice[2], 'lineno', '?')
 
+        # Mapea el operador al nombre de instrucción de cuarteto.
+        op_quartet = self._operador_binario_a_cuarteto(operator_type)
+
         # Si hay error previo en algún operando, corta la evaluación.
         if 'error' in (left_type, right_type):
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
-        # En este paso se permiten valores desconocidos para no bloquear
-        # reglas semánticas aún no implementadas (funciones/registros).
+        # Permite valores desconocidos para no bloquear análisis semántico.
         if 'unknown' in (left_type, right_type):
-            p[0] = ('unknown', None)
+            p[0] = self._expr('unknown', None)
             return
 
         # Maneja operadores aritméticos.
@@ -1251,28 +1575,22 @@ class ParserClass:
             if not (self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type)):
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Operación aritmética inválida entre '{left_type}' y '{right_type}'")
-                p[0] = ('error', None)
+                p[0] = self._expr('error', None)
                 return
 
-            # Calcula el tipo común para la operación.
+            # Calcula el tipo común del resultado.
             result_type = self._tipo_numerico_comun(left_type, right_type)
-
-            # En multiplicación y división, char se promociona a int.
             if operator_type in ('TIMES', 'DIVIDE') and result_type == 'char':
                 result_type = 'int'
 
-            # Inicializa el valor de resultado cuando no se puede evaluar aún.
+            # Evalúa valor en tiempo de análisis si hay literales concretos.
             result_value = None
-
-            # Evalúa solo si ambos operandos tienen valor concreto.
             if left_value is not None and right_value is not None:
                 try:
-                    # Convierte ambos operandos al tipo común.
                     _, l_val, r_val = self._normalizar_operandos_numericos(
                         left_type, left_value, right_type, right_value
                     )
 
-                    # Ejecuta la operación aritmética correspondiente.
                     if operator_type == 'PLUS':
                         raw = l_val + r_val
                     elif operator_type == 'MINUS':
@@ -1286,18 +1604,22 @@ class ParserClass:
                     else:
                         raw = l_val / r_val
 
-                    # Convierte el resultado a char cuando el tipo final lo requiere.
                     if raw is not None and result_type == 'char':
                         result_value = chr(int(raw) % 256)
                     else:
                         result_value = raw
-
-                # Si falla la evaluación, deja valor desconocido.
                 except (TypeError, ValueError, ZeroDivisionError):
                     result_value = None
 
-            # Devuelve tipo y valor de la operación aritmética.
-            p[0] = (result_type, result_value)
+            # Emite cuarteto aritmético cuando ambos operandos son representables.
+            result_ref = None
+            if op_quartet and left_ref is not None and right_ref is not None:
+                left_emit = self._asegurar_tipo_en_cuartetos(left_ref, left_type, result_type)
+                right_emit = self._asegurar_tipo_en_cuartetos(right_ref, right_type, result_type)
+                result_ref = self._nuevo_temporal()
+                self._emit(op_quartet, left_emit, right_emit, result_ref)
+
+            p[0] = self._expr(result_type, result_value, result_ref)
             return
 
         # Maneja operadores comparativos numéricos.
@@ -1306,20 +1628,17 @@ class ParserClass:
             if not (self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type)):
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Operación comparativa inválida entre '{left_type}' y '{right_type}'")
-                p[0] = ('error', None)
+                p[0] = self._expr('error', None)
                 return
 
-            # Inicializa el valor de comparación.
+            # Evalúa valor en tiempo de análisis si hay literales concretos.
             result_value = None
-
-            # Evalúa comparación si ambos operandos tienen valor concreto.
+            common_type = self._tipo_numerico_comun(left_type, right_type)
             if left_value is not None and right_value is not None:
-                # Convierte ambos operandos al mismo tipo numérico.
                 _, l_val, r_val = self._normalizar_operandos_numericos(
                     left_type, left_value, right_type, right_value
                 )
 
-                # Ejecuta la comparación indicada por el operador.
                 if operator_type == 'GREATER':
                     result_value = l_val > r_val
                 elif operator_type == 'GREATER_EQUAL':
@@ -1329,43 +1648,54 @@ class ParserClass:
                 else:
                     result_value = l_val <= r_val
 
-            # Las comparaciones siempre devuelven boolean.
-            p[0] = ('boolean', result_value)
+            # Emite cuarteto comparativo cuando ambos operandos son representables.
+            result_ref = None
+            if op_quartet and left_ref is not None and right_ref is not None:
+                left_emit = self._asegurar_tipo_en_cuartetos(left_ref, left_type, common_type)
+                right_emit = self._asegurar_tipo_en_cuartetos(right_ref, right_type, common_type)
+                result_ref = self._nuevo_temporal()
+                self._emit(op_quartet, left_emit, right_emit, result_ref)
+
+            p[0] = self._expr('boolean', result_value, result_ref)
             return
 
         # Maneja comparación de igualdad.
         if operator_type == 'EQUAL':
-            # Permite comparar tipos iguales o convertibles entre sí.
+            # Verifica compatibilidad de tipos para comparar.
             comparable = (
                 left_type == right_type
                 or self._auto_convert(left_type, right_type)
                 or self._auto_convert(right_type, left_type)
             )
-
-            # Reporta error si los tipos no son comparables.
             if not comparable:
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: No se pueden comparar tipos '{left_type}' y '{right_type}' con '=='")
-                p[0] = ('error', None)
+                p[0] = self._expr('error', None)
                 return
 
-            # Inicializa el valor de igualdad.
+            # Evalúa valor en tiempo de análisis si hay literales concretos.
             result_value = None
-
-            # Evalúa igualdad si ambos operandos tienen valor concreto.
             if left_value is not None and right_value is not None:
-                # Usa comparación numérica normalizada para tipos numéricos.
                 if self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type):
                     _, l_val, r_val = self._normalizar_operandos_numericos(
                         left_type, left_value, right_type, right_value
                     )
                     result_value = (l_val == r_val)
                 else:
-                    # Para el resto, compara valores directamente.
                     result_value = (left_value == right_value)
 
-            # Devuelve resultado booleano de igualdad.
-            p[0] = ('boolean', result_value)
+            # Emite cuarteto de igualdad cuando ambos operandos son representables.
+            result_ref = None
+            if op_quartet and left_ref is not None and right_ref is not None:
+                left_emit, right_emit = left_ref, right_ref
+                if self._es_tipo_numerico(left_type) and self._es_tipo_numerico(right_type):
+                    common_type = self._tipo_numerico_comun(left_type, right_type)
+                    left_emit = self._asegurar_tipo_en_cuartetos(left_ref, left_type, common_type)
+                    right_emit = self._asegurar_tipo_en_cuartetos(right_ref, right_type, common_type)
+                result_ref = self._nuevo_temporal()
+                self._emit(op_quartet, left_emit, right_emit, result_ref)
+
+            p[0] = self._expr('boolean', result_value, result_ref)
             return
 
         # Maneja operadores lógicos booleanos.
@@ -1374,47 +1704,45 @@ class ParserClass:
             if left_type != 'boolean' or right_type != 'boolean':
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: Operación lógica inválida entre '{left_type}' y '{right_type}'")
-                p[0] = ('error', None)
+                p[0] = self._expr('error', None)
                 return
 
-            # Inicializa el valor lógico.
+            # Evalúa valor en tiempo de análisis si hay literales concretos.
             result_value = None
-
-            # Evalúa operación lógica si ambos operandos tienen valor concreto.
             if left_value is not None and right_value is not None:
                 if operator_type == 'AND':
                     result_value = left_value and right_value
                 else:
                     result_value = left_value or right_value
 
-            # Devuelve resultado booleano lógico.
-            p[0] = ('boolean', result_value)
+            # Emite cuarteto lógico cuando ambos operandos son representables.
+            result_ref = None
+            if op_quartet and left_ref is not None and right_ref is not None:
+                result_ref = self._nuevo_temporal()
+                self._emit(op_quartet, left_ref, right_ref, result_ref)
+
+            p[0] = self._expr('boolean', result_value, result_ref)
             return
 
         # Si el operador no entra en ningún caso, marca error.
-        p[0] = ('error', None)
+        p[0] = self._expr('error', None)
     
     # Operadores unarios del lenguaje (NOT, +, -).
     def p_expresion_unaria(self, p):
         '''expresion : NOT expresion
                     | MINUS expresion %prec UMINUS
                     | PLUS expresion %prec UPLUS'''
-        # Obtiene la expresión operando del operador unario.
-        expr = p[2]
-
-        # Extrae tipo y valor del operando.
-        if isinstance(expr, tuple) and len(expr) == 2:
-            expr_type, expr_value = expr
-        else:
-            expr_type, expr_value = ('error', None)
+        # Extrae tipo, valor y referencia del operando.
+        expr_type, expr_value, expr_ref = self._extraer_expr(p[2])
 
         # Obtiene operador y línea para mensajes de error.
         operator_type = p.slice[1].type
         line = getattr(p.slice[1], 'lineno', '?')
+        op_quartet = self._operador_unario_a_cuarteto(operator_type)
 
         # Propaga errores o valores aún desconocidos.
         if expr_type in ('error', 'unknown'):
-            p[0] = (expr_type, None)
+            p[0] = self._expr(expr_type, None)
             return
 
         # Maneja el operador lógico NOT.
@@ -1423,32 +1751,49 @@ class ParserClass:
             if expr_type != 'boolean':
                 self.has_semantic_error = True
                 print(f"[ERROR SEMANTICO] Linea {line}: El operador '!' requiere boolean y recibió '{expr_type}'")
-                p[0] = ('error', None)
+                p[0] = self._expr('error', None)
                 return
 
-            # Calcula negación si hay valor concreto.
-            p[0] = ('boolean', None if expr_value is None else (not expr_value))
+            # Calcula valor en tiempo de análisis.
+            result_value = None if expr_value is None else (not expr_value)
+
+            # Emite cuarteto unario si hay referencia.
+            result_ref = None
+            if op_quartet and expr_ref is not None:
+                result_ref = self._nuevo_temporal()
+                self._emit(op_quartet, expr_ref, '_', result_ref)
+
+            p[0] = self._expr('boolean', result_value, result_ref)
             return
 
         # Para + y -, valida que el tipo sea numérico.
         if not self._es_tipo_numerico(expr_type):
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: El operador unario requiere tipo numérico y recibió '{expr_type}'")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
-        # El signo + no cambia el valor y None se propaga.
+        # Calcula valor en tiempo de análisis.
         if expr_value is None or operator_type == 'PLUS':
-            p[0] = (expr_type, expr_value)
-            return
+            result_value = expr_value
+        elif expr_type == 'char' and isinstance(expr_value, str) and len(expr_value) == 1:
+            result_value = chr((-ord(expr_value)) % 256)
+        else:
+            result_value = -expr_value
 
-        # En char aplica negación modular sobre el código ASCII.
-        if expr_type == 'char' and isinstance(expr_value, str) and len(expr_value) == 1:
-            p[0] = ('char', chr((-ord(expr_value)) % 256))
-            return
+        # Emite cuarteto unario si hay referencia.
+        result_ref = None
+        if op_quartet and expr_ref is not None:
+            emit_ref = expr_ref
 
-        # En tipos numéricos normales aplica negación aritmética.
-        p[0] = (expr_type, -expr_value)
+            # Normaliza char a int para operaciones unarias numéricas en cuartetos.
+            if expr_type == 'char' and operator_type in ('PLUS', 'MINUS'):
+                emit_ref = self._asegurar_tipo_en_cuartetos(expr_ref, 'char', 'int')
+
+            result_ref = self._nuevo_temporal()
+            self._emit(op_quartet, emit_ref, '_', result_ref)
+
+        p[0] = self._expr(expr_type, result_value, result_ref)
     
 
     # Reduce una expresión al nivel de primario.
@@ -1469,15 +1814,25 @@ class ParserClass:
             node = p[1]
 
             # Si ya viene tipado, lo conserva tal cual.
-            if isinstance(node, tuple) and len(node) == 2:
-                p[0] = node
+            if isinstance(node, tuple) and len(node) >= 2:
+                node_type, node_value, node_ref = self._extraer_expr(node)
+                p[0] = self._expr(node_type, node_value, node_ref)
 
             # Si viene como nodo de acceso, extrae tipo y valor.
             elif isinstance(node, dict):
-                p[0] = (node.get('type', 'unknown'), node.get('value'))
+                node_type = node.get('type', 'unknown')
+                node_value = node.get('value')
+
+                # Solo se genera referencia para accesos simples a variable.
+                if node.get('kind') == 'var':
+                    node_ref = node.get('name')
+                else:
+                    node_ref = None
+
+                p[0] = self._expr(node_type, node_value, node_ref)
             else:
                 # Si no se reconoce el formato, marca tipo desconocido.
-                p[0] = ('unknown', None)
+                p[0] = self._expr('unknown', None)
         else:
             # Caso con paréntesis: propaga la expresión interna.
             p[0] = p[2]
@@ -1581,27 +1936,27 @@ class ParserClass:
         if self.current_function is not None and func_name == self.current_function.get('name'):
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: No se permite invocar '{func_name}' dentro de su propio cuerpo")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Verifica que la función exista.
         if func_name not in self.functions:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: La función '{func_name}' no existe")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Extrae tipos de los argumentos recibidos.
         arg_types = []
         for arg in args:
-            if isinstance(arg, tuple) and len(arg) == 2:
+            if isinstance(arg, tuple) and len(arg) >= 2:
                 arg_types.append(arg[0])
             else:
                 arg_types.append('error')
 
         # Si algún argumento ya viene con error, corta la llamada.
         if 'error' in arg_types:
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Busca sobrecargas compatibles y su coste de conversión.
@@ -1640,21 +1995,26 @@ class ParserClass:
         if not candidates:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: No existe una sobrecarga compatible para '{func_name}'")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Prioriza coincidencias exactas sin conversión.
         exact = [signature for conversions, signature in candidates if conversions == 0]
         if len(exact) == 1:
             selected = exact[0]
-            p[0] = (selected.get('return_type', 'unknown'), None)
+            return_type = selected.get('return_type', 'unknown')
+            result_ref = None
+            if return_type != 'void':
+                result_ref = self._nuevo_temporal()
+            self._emit('CALL', func_name, len(args), result_ref)
+            p[0] = self._expr(return_type, None, result_ref)
             return
 
         # Si hay más de una coincidencia exacta, la llamada es ambigua.
         if len(exact) > 1:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: Llamada ambigua a '{func_name}'")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Si no hay exacta, elige la de menor coste de conversión.
@@ -1665,12 +2025,17 @@ class ParserClass:
         if len(best) != 1:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: Llamada ambigua a '{func_name}'")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Devuelve el tipo de retorno de la sobrecarga seleccionada.
         selected = best[0]
-        p[0] = (selected.get('return_type', 'unknown'), None)
+        return_type = selected.get('return_type', 'unknown')
+        result_ref = None
+        if return_type != 'void':
+            result_ref = self._nuevo_temporal()
+        self._emit('CALL', func_name, len(args), result_ref)
+        p[0] = self._expr(return_type, None, result_ref)
 
     # Reconoce la instanciación de registros mediante new.
     def p_instanciacion(self, p):
@@ -1684,7 +2049,7 @@ class ParserClass:
         if record_name not in self.records:
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: El registro '{record_name}' no existe")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Compara cantidad de argumentos con cantidad de campos.
@@ -1692,7 +2057,7 @@ class ParserClass:
         if len(args) != len(field_items):
             self.has_semantic_error = True
             print(f"[ERROR SEMANTICO] Linea {line}: La instanciación de '{record_name}' requiere {len(field_items)} argumentos y recibió {len(args)}")
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Inicializa la instancia y el estado de error local.
@@ -1703,8 +2068,8 @@ class ParserClass:
         for (field_name, field_type), arg in zip(field_items, args):
             # Extrae tipo y valor del argumento.
             arg_type, arg_value = ('error', None)
-            if isinstance(arg, tuple) and len(arg) == 2:
-                arg_type, arg_value = arg
+            if isinstance(arg, tuple) and len(arg) >= 2:
+                arg_type, arg_value = arg[0], arg[1]
 
             # Si el argumento ya es erróneo, marca error local.
             if arg_type == 'error':
@@ -1727,11 +2092,11 @@ class ParserClass:
 
         # Si hubo errores locales, devuelve error de instanciación.
         if has_local_error:
-            p[0] = ('error', None)
+            p[0] = self._expr('error', None)
             return
 
         # Devuelve instancia válida tipada con su nombre de registro.
-        p[0] = (record_name, instance)
+        p[0] = self._expr(record_name, instance)
 
     # Permite que la lista de argumentos de una llamada sea vacía u opcional.
     def p_argumentos_opt(self, p):
@@ -1769,13 +2134,13 @@ class ParserClass:
 
         # Devuelve el literal tipado según su clase léxica.
         if token_type == 'INT_VALUE':
-            p[0] = ('int', p[1])
+            p[0] = self._expr('int', p[1], self._valor_a_operando(p[1], 'int'))
         elif token_type == 'FLOAT_VALUE':
-            p[0] = ('float', p[1])
+            p[0] = self._expr('float', p[1], self._valor_a_operando(p[1], 'float'))
         elif token_type == 'CHAR_VALUE':
-            p[0] = ('char', p[1])
+            p[0] = self._expr('char', p[1], self._valor_a_operando(p[1], 'char'))
         else:
-            p[0] = ('boolean', p[1])
+            p[0] = self._expr('boolean', p[1], self._valor_a_operando(p[1], 'boolean'))
 
     # =======================================
     # PRODUCCIÓN VACÍA

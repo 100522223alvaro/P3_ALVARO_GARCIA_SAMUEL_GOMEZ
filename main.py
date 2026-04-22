@@ -116,6 +116,9 @@ def main():
         # Si el análisis ha sido correcto, exporta las tablas semánticas.
         parser.exportar_tablas_semanticas(entrada)
 
+        # Exporta el código intermedio en formato de cuartetos.
+        parser.exportar_cuartetos(entrada)
+
     except Exception as e:
         # Captura errores inesperados al crear o ejecutar el parser.
         print(f"Error al inicializar el parser: {e}", file=sys.stderr)
