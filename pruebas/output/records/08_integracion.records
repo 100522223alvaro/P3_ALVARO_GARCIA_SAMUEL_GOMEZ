@@ -1,0 +1,2 @@
+Vec2:[x:float,y:float]
+Rectangulo:[origen:Vec2,esquina:Vec2]

@@ -1,0 +1,79 @@
+// Test 03: Estructuras de control (if/else, while, do-while, break)
+// Cubre: if simple, if-else, if anidado, while, do-while,
+//        break en bucle simple, break en bucle anidado.
+// Genera cuartetos: JUMPF, JUMPT, JUMP, LABEL, ASSIGN, ADD, LT, GT, EQ.
+
+int contador = 0;
+int resultado = 0;
+boolean activo = true;
+int i = 0;
+int j = 0;
+int k = 0;
+int acum = 0;
+boolean condicion = false;
+
+// if simple
+if (activo) {
+    contador = 1;
+}
+
+// if-else
+if (contador > 0) {
+    resultado = 10;
+} else {
+    resultado = 0;
+}
+
+// if anidado
+if (resultado > 5) {
+    if (contador == 1) {
+        acum = 100;
+    } else {
+        acum = 50;
+    }
+} else {
+    acum = -1;
+}
+
+// while clasico
+i = 0;
+while (i < 5) {
+    i = i + 1;
+    resultado = resultado + i;
+}
+
+// do-while
+j = 0;
+do {
+    j = j + 1;
+} while (j < 3);
+
+// break en while: sale cuando k > 5
+k = 0;
+while (k < 100) {
+    if (k > 5) {
+        break;
+    }
+    k = k + 1;
+}
+
+// break en do-while
+int m = 0;
+do {
+    if (m == 2) {
+        break;
+    }
+    m = m + 1;
+} while (m < 10);
+
+// condicion compuesta en if
+condicion = (resultado > 0) && (k > 0);
+if (condicion) {
+    print(resultado);
+} else {
+    print(k);
+}
+
+print(i);
+print(j);
+print(m);

@@ -1,0 +1,74 @@
+// Test 02: Expresiones aritmeticas, comparativas, logicas y conversiones
+// Cubre: operadores +,-,*,/; unarios -/+/!; comparativos; logicos &&/||;
+//        conversiones automaticas char->int, char->float, int->float;
+//        precedencia y parentesis; == permisivo entre tipos compatibles.
+
+int a = 10;
+int b = 3;
+float f = 2.5;
+char c = 'A';
+boolean flag = true;
+
+// --- Aritmetica entera ---
+int suma = a + b;
+int resta = a - b;
+int producto = a * b;
+int division = a / b;
+
+// --- Aritmetica flotante ---
+float fSuma = f + 1.5;
+float fProducto = f * 2.0;
+
+// --- Conversiones automaticas ---
+// char + char = char (sin promocion en + y -)
+char cSuma = 'a' + 'b';
+char cResta = 'z' - 'a';
+
+// char * char = int (promocion en * y /)
+int cMul = 'a' * 'b';
+int cDiv = 'z' / 'a';
+
+// char * int = int
+int cIntMix = c * 8;
+
+// char * float = float (char -> int -> float)
+float cFloatMix = c * 2.0;
+
+// int * float = float (int -> float)
+float intFloat = a * 1.5;
+
+// --- Operadores unarios ---
+int negInt = -a;
+float negFloat = -f;
+int posInt = +b;
+
+// --- Comparativas (devuelven boolean) ---
+boolean cmp1 = a > b;
+boolean cmp2 = f >= 2.5;
+boolean cmp3 = a < 100;
+boolean cmp4 = b <= 3;
+boolean cmp5 = a == 10;
+
+// == entre tipos compatibles: int == float, boolean == boolean
+boolean cmpMix = 5 == 5.0;
+boolean cmpBool = flag == false;
+
+// --- Logicas (solo boolean) ---
+boolean andRes = cmp1 && cmp3;
+boolean orRes = cmp2 || cmp4;
+boolean notRes = !flag;
+
+// --- Precedencia y parentesis ---
+int prec = (a + b) * (a - b);
+float precF = (f + 1.0) * (a - b) / 2.0;
+boolean compleja = (a > 0) && (f < 10.0) || !cmp4;
+
+print(suma);
+print(cMul);
+print(cIntMix);
+print(cFloatMix);
+print(intFloat);
+print(negInt);
+print(cmp1);
+print(andRes);
+print(compleja);

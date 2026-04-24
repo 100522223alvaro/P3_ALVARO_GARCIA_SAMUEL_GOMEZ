@@ -1,0 +1,7 @@
+cuadrado:[n:int],int
+suma:[a:int,b:int],int
+media:[a:float,b:float],float
+mostrar:[v:int],void
+imprimirSuma:[x:int,y:int],void
+duplicar:[x:float],float
+factorial:[n:int],int

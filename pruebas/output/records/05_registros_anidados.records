@@ -1,0 +1,3 @@
+Vec2:[x:float,y:float]
+Segmento:[inicio:Vec2,fin:Vec2]
+Triangulo:[a:Vec2,b:Vec2,c:Vec2]

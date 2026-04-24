@@ -1,0 +1,64 @@
+// Test 09: Casos limite y construcciones especiales
+// Cubre: comentarios de linea y multilínea; semicolons multiples entre
+//        sentencias; expresiones con parentesis muy anidados; char con
+//        distintos valores ASCII; programa valido que empieza y acaba
+//        con comentarios.
+
+/* Comentario multilínea al inicio del fichero.
+   Puede ocupar varias lineas.
+   Este bloque es ignorado por el lexer. */
+
+// Variables de prueba
+int a = 5;
+int b = 3;
+int c = 2;
+float f = 1.5;
+boolean flag = true;
+
+/* Otro bloque multilínea
+   en medio del programa */
+
+// Semicolons multiples entre sentencias (son sentencias vacias validas)
+;;;
+a = 10;
+;;;
+b = 4;
+;
+
+// Comentario de linea al final de una sentencia
+c = a + b; // esto es un comentario
+
+// Expresion con parentesis profundamente anidados
+int profundo = ((((a + b) * c) - b) / c);
+float profF = (((f + 1.0) * (a - b)) / (c + 1));
+
+// Distintos valores char ASCII
+char espacio = ' ';
+char numChar = '0';
+char minuscula = 'z';
+char mayuscula = 'A';
+char signo = '+';
+
+// Operaciones con chars distintos
+char rSuma = 'a' + 'b';
+int rMul = 'Z' * 'a';
+
+// Expresion booleana muy anidada
+boolean comp = ((a > b) && (b > c)) || (!(flag) && (f > 0.5));
+
+// if con condicion profundamente parentesizada
+if (((a > 0) && (b > 0)) || (c == 2)) {
+    int res = a * b + c;
+    print(res);
+}
+
+print(profundo);
+print(profF);
+print(espacio);
+print(rMul);
+print(comp);
+
+// Semicolons al final del fichero
+;;;
+
+/* Comentario multilínea al final del fichero */

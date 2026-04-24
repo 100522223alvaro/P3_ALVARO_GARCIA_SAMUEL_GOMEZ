@@ -1,0 +1,16 @@
+ASSIGN,1.0,_,sx
+ASSIGN,2.0,_,sy
+ASSIGN,5.0,_,ex
+ASSIGN,6.0,_,ey
+ASSIGN,0.0,_,ax
+ASSIGN,4.0,_,bx
+ASSIGN,3.0,_,cy
+SUB,4.0,0.0,@T1
+ASSIGN,@T1,_,base
+SUB,3.0,0.0,@T2
+ASSIGN,@T2,_,altura
+PRINT,sx,_,_
+PRINT,ex,_,_
+PRINT,ax,_,_
+PRINT,base,_,_
+PRINT,altura,_,_

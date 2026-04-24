@@ -1,0 +1,13 @@
+v1:Vec2,{x:0.0,y:0.0}
+v2:Vec2,{x:3.0,y:4.0}
+seg:Segmento,{inicio:{x:10.0,y:2.0},fin:{x:5.0,y:99.0}}
+sx:float,1.0
+sy:float,2.0
+ex:float,5.0
+ey:float,6.0
+tri:Triangulo,{a:{x:0.0,y:0.0},b:{x:4.0,y:0.0},c:{x:2.5,y:3.0}}
+ax:float,0.0
+bx:float,4.0
+cy:float,3.0
+base:float,4.0
+altura:float,3.0

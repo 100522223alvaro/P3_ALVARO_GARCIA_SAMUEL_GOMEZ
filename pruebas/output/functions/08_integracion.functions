@@ -1,0 +1,6 @@
+ancho:[r:Rectangulo],float
+alto:[r:Rectangulo],float
+area:[r:Rectangulo],float
+area:[a:float,b:float],float
+esCuadrado:[r:Rectangulo],boolean
+describir:[r:Rectangulo],void

@@ -1,0 +1,9 @@
+contador:int
+resultado:int
+activo:boolean
+i:int
+j:int
+k:int
+acum:int
+condicion:boolean
+m:int

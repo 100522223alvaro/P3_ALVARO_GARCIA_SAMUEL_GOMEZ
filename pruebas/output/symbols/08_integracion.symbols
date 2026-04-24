@@ -1,0 +1,12 @@
+r1:Rectangulo
+r2:Rectangulo
+cuad1:boolean
+cuad2:boolean
+i:int
+areaTotal:float
+a1:float
+a2:float
+n:int
+sumaC:int
+cnt:int
+aEscalar:float

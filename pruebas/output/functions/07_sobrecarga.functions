@@ -1,0 +1,7 @@
+calcular:[x:float],float
+calcular:[x:int],int
+imprimir:[a:int,b:int],void
+imprimir:[a:int],void
+combinar:[a:int,b:float],float
+combinar:[a:float,b:float],float
+combinar:[a:int],float

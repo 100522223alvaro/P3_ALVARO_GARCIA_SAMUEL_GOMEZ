@@ -1,0 +1,72 @@
+// Test 07: Sobrecarga de funciones
+// Cubre: misma funcion con distinto numero de parametros;
+//        misma funcion con distintos tipos de parametros;
+//        resolucion exacta vs resolucion por coste minimo de conversion;
+//        char->int (coste 1) tiene prioridad sobre char->float (coste 2).
+
+// --- Sobrecarga por tipo (int vs float) ---
+float calcular(float x) {
+    return x * 2.0;
+}
+
+int calcular(int x) {
+    return x * 3;
+}
+
+// Resolucion exacta: float
+float r1 = calcular(5.0);
+
+// Resolucion exacta: int
+int r2 = calcular(10);
+
+// Resolucion por coste: char->int (coste 1) < char->float (coste 2)
+// Se escoge la version int
+int r3 = calcular('A');
+
+// --- Sobrecarga por aridad ---
+void imprimir(int a, int b) {
+    print(a);
+    print(b);
+}
+
+void imprimir(int a) {
+    print(a);
+}
+
+// Resolucion 2 parametros
+imprimir(3, 4);
+
+// Resolucion 1 parametro
+imprimir(7);
+
+// --- Sobrecarga mixta: aridad + tipo ---
+float combinar(int a, float b) {
+    return a * b;
+}
+
+float combinar(float a, float b) {
+    return a + b;
+}
+
+float combinar(int a) {
+    return a * 1.0;
+}
+
+// Exacto: int, float
+float c1 = combinar(2, 3.5);
+
+// Exacto: float, float
+float c2 = combinar(1.5, 2.5);
+
+// Exacto: int solo
+float c3 = combinar(5);
+
+// Conversion: char->int para el primer param, float exacto para el segundo
+float c4 = combinar('B', 1.0);
+
+print(r1);
+print(r2);
+print(r3);
+print(c1);
+print(c2);
+print(c3);

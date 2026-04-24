@@ -1,0 +1,6 @@
+sq:int
+total:int
+avg:float
+dup:float
+fact5:int
+dupChar:float

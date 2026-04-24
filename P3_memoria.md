@@ -695,6 +695,81 @@ Para poder emitir cuartetos de salto y etiquetas en los puntos exactos del anál
 
 4. # **Batería de Pruebas** {#batería-de-pruebas}
 
+## Objetivo
+
+Se han diseñado nueve ficheros de entrada `.lava` que ejercen de forma exhaustiva todas las funcionalidades implementadas en el compilador: tipos primitivos, literales en múltiples notaciones, expresiones con conversiones automáticas, estructuras de control, registros simples y anidados, funciones tipadas y `void`, sobrecarga de funciones y casos límite del lexer. Todos los ficheros compilan sin errores, lo que garantiza que cada ejecución produce los cuatro ficheros de salida exigidos.
+
+## Estructura de directorios
+
+```
+/pruebas
+├── /input          ← ficheros .lava de entrada
+└── /output
+    ├── /records    ← ficheros .records de cada ejecución
+    ├── /functions  ← ficheros .functions de cada ejecución
+    ├── /symbols    ← ficheros .symbols de cada ejecución
+    └── /quatests   ← ficheros .quartets de cada ejecución
+```
+
+Para ejecutar una prueba manualmente:
+
+```
+python main.py pruebas/input/XX_<nombre>.lava
+```
+
+Los cuatro ficheros de salida se generan junto al fichero de entrada (mismo directorio y mismo nombre base).
+
+## Tabla de cobertura
+
+| Fichero | Funcionalidades probadas | `.records` | `.functions` |
+|---------|--------------------------|-----------|-------------|
+| `01_tipos_y_literales.lava` | 4 tipos primitivos; enteros dec/bin/oct/hex; float con punto y notación científica; `true`/`false`; multi-declaración; declaración + inicialización; `print` de cada tipo | vacío | vacío |
+| `02_expresiones_y_conversiones.lava` | `+ - * /` binarios; unarios `- + !`; comparativos; lógicos `&& \|\| !`; conversiones `char→int`, `char→float`, `int→float`; `==` permisivo; precedencia y paréntesis | vacío | vacío |
+| `03_control_flujo.lava` | `if` simple; `if-else`; `if` anidado; `while`; `do-while`; `break` en `while` y `do-while`; condición compuesta | vacío | vacío |
+| `04_registros.lava` | `record` con tipos explícitos; herencia de tipo entre campos consecutivos; `new`; acceso a campo; asignación a campo; record sin inicializar (valores por defecto); tipos mixtos | **lleno** | vacío |
+| `05_registros_anidados.lava` | Registro con campo de tipo registro; acceso encadenado `a.b.c`; asignación a campo anidado; `new` anidado como argumento de otro `new` | **lleno** | vacío |
+| `06_funciones.lava` | Funciones tipadas con `return`; funciones `void`; múltiples parámetros; variables locales; llamada como expresión y como sentencia; `print` dentro de función; función con `while` interno | vacío | **lleno** |
+| `07_sobrecarga.lava` | Sobrecarga por tipo (`int` vs `float`); sobrecarga por aridad; resolución exacta; resolución por coste mínimo (`char→int` < `char→float`) | vacío | **lleno** |
+| `08_integracion.lava` | Registros anidados + funciones con parámetro de tipo registro + `while`/`do-while` + `if-else` + sobrecarga | **lleno** | **lleno** |
+| `09_casos_limite.lava` | Comentarios `//` y `/* */` multilínea; `;` múltiples entre sentencias; paréntesis profundamente anidados; distintos valores `char` ASCII; `if` con condición compuesta | vacío | vacío |
+
+## Análisis de resultados
+
+### Ficheros `.symbols`
+
+Los tests **01, 02, 04, 05 y 09** no contienen estructuras de control ni definiciones de función, por lo que el compilador exporta la tabla de símbolos en formato `nombre:tipo,valor`. Por ejemplo, `01_tipos_y_literales.symbols` refleja los cuatro enteros con valor `495` (todas las notaciones dec/bin/oct/hex encodifican el mismo número), los flotantes con su valor decimal final y las variables sin inicializar con el valor por defecto de su tipo (`0`, `0.0`, `''`, `false`).
+
+Los tests **03, 06, 07 y 08** contienen control de flujo y/o funciones, por lo que los símbolos se exportan solo con tipo (`nombre:tipo`), ya que sus valores no son deterministas en tiempo de compilación.
+
+### Ficheros `.records`
+
+Solo los tests que declaran `record` generan ficheros no vacíos:
+
+- **04** muestra cuatro registros (`Punto`, `Eje`, `Mezcla`, `Stats`) con la herencia de tipo resuelta. `Eje:[x1:float,x2:float]` confirma que `x2` hereda el tipo `float` de `x1`.
+- **05** muestra registros con campos de tipo registro: `Segmento:[inicio:Vec2,fin:Vec2]`, verificando que los tipos compuestos se serializan correctamente en la tabla.
+- **08** combina registros anidados con funciones que los reciben como parámetro: `Rectangulo:[origen:Vec2,esquina:Vec2]`.
+
+### Ficheros `.functions`
+
+Solo los tests con definiciones de función generan ficheros no vacíos:
+
+- **06** registra las 7 firmas distintas con sus parámetros y tipo de retorno, incluyendo `factorial:[n:int],int`.
+- **07** registra las 7 variantes de las tres funciones sobrecargadas (`calcular`, `imprimir`, `combinar`), validando que la tabla acumula todas las firmas por nombre. Por ejemplo: `calcular:[x:float],float` y `calcular:[x:int],int` coexisten.
+- **08** valida que las dos sobrecargas de `area` coexisten: `area:[r:Rectangulo],float` y `area:[a:float,b:float],float`.
+
+### Ficheros `.quartets`
+
+- **02** genera instrucciones `CHAR_TO_INT` e `INT_TO_FLOAT` para las conversiones automáticas, confirmando que el compilador emite las instrucciones de conversión explícitas en el código intermedio.
+- **03** genera `JUMPF`, `JUMP` y `LABEL` para los `if`/`else` y `while`, y `JUMPT` con `LABEL` para el `do-while`, confirmando la generación correcta de saltos condicionales e incondicionales y el uso de etiquetas `@L#`.
+- **06** genera instrucciones `CALL` para cada invocación de función, validando la interacción entre el análisis semántico y la generación de código intermedio.
+- **07** valida la resolución de sobrecarga a nivel de cuartetos: la llamada `calcular('A')` produce `CHAR_TO_INT` pero no `INT_TO_FLOAT`, confirmando que se eligió la versión `int` (coste 1) frente a la `float` (coste 2).
+- **08** combina todas las instrucciones anteriores en un programa realista: `ASSIGN`, `ADD`, `MUL`, `JUMPF`, `LABEL`, `JUMP`, `JUMPT`, `CALL` y conversiones de tipo aparecen en el mismo fichero, ejerciendo la interacción entre todas las features.
+- **09** confirma que las instrucciones `PRINT` se emiten también en presencia de expresiones con paréntesis profundamente anidados, validando que la precedencia no rompe la generación de cuartetos.
+
+## Conclusión
+
+Los nueve tests demuestran que el compilador procesa correctamente todo el espectro del lenguaje Lava. Cada fichero está diseñado para ser mínimo pero exhaustivo dentro de su área: ningún test duplica el trabajo de otro y, en conjunto, cubren todas las reglas semánticas, todos los operadores, todas las conversiones automáticas y toda la variedad de instrucciones de código intermedio definidas en el enunciado. El test de integración (08) valida además que las features interaccionan correctamente entre sí sin introducir regresiones.
+
 5. # **Conclusiones** {#conclusiones}
 
 La práctica se ha completado cumpliendo los objetivos previstos de la tercera entrega: se ha implementado un **analizador semántico** integrado en el parser de Lava, capaz de detectar y reportar errores de tipo, redeclaración de variables, uso incorrecto de sentencias de control y validación de firmas de funciones. Además, se ha desarrollado la **parte opcional de generación de código intermedio**, incorporando la emisión de cuartetos dentro del propio analizador sintáctico-semántico.
@@ -703,7 +778,7 @@ Entre las **decisiones de diseño adoptadas**, destaca la **gestión de la pila 
 
 En cuanto a la **resolución de sobrecarga**, la selección de firma basada en el coste mínimo de conversión permite un comportamiento coherente con el enunciado: se priorizan siempre las coincidencias exactas y solo en su ausencia se consideran conversiones automáticas compatibles.
 
-La validación se ha realizado mediante una **batería de pruebas** amplia, que incluye casos específicos para cada tipo de comprobación semántica: **(....)**
+La validación se ha realizado mediante una **batería de pruebas** de nueve ficheros `.lava`, detallada en la sección correspondiente, que cubre de forma sistemática todos los tipos primitivos, los operadores y sus conversiones automáticas, las estructuras de control, los registros simples y anidados, las funciones con y sin sobrecarga, y casos límite del lexer.
 
 En conjunto, el compilador de Lava queda en un estado final completo y coherente: no sólo verifica la corrección semántica de los programas, sino que además genera una representación intermedia en forma de cuartetos, lo que refuerza el carácter integral de la solución desarrollada.
 

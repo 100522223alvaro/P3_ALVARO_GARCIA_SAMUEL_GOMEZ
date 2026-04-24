@@ -1,0 +1,15 @@
+p:Punto,{x:10.0,y:20.0}
+e:Eje,{x1:1.5,x2:2.5}
+m:Mezcla,{id:42,valor:9.99,letra:X,activo:false}
+s:Stats,{min:0,max:200,avg:50,ratio:0.75,total:1.0}
+px:float,3.0
+py:float,4.0
+e1:float,1.5
+e2:float,2.5
+mid:int,1
+mval:float,9.99
+mletra:char,X
+mactivo:boolean,true
+vacio:Punto,{x:0.0,y:0.0}
+distX:float,8.5
+distY:float,17.5

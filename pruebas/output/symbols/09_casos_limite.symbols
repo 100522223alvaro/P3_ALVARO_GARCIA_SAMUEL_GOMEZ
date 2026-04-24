@@ -1,0 +1,16 @@
+a:int
+b:int
+c:int
+f:float
+flag:boolean
+profundo:int
+profF:float
+espacio:char
+numChar:char
+minuscula:char
+mayuscula:char
+signo:char
+rSuma:char
+rMul:int
+comp:boolean
+res:int

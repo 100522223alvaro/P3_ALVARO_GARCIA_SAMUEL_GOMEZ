@@ -1,0 +1,4 @@
+Punto:[x:float,y:float]
+Eje:[x1:float,x2:float]
+Mezcla:[id:int,valor:float,letra:char,activo:boolean]
+Stats:[min:int,max:int,avg:int,ratio:float,total:float]

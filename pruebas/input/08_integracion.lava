@@ -1,0 +1,91 @@
+// Test 08: Integracion de todas las construcciones del lenguaje
+// Cubre: registros anidados + funciones con parametro de tipo registro +
+//        control de flujo (while, if-else) + sobrecarga + conversiones.
+// Es el caso de uso mas realista: combina todas las features.
+
+record Vec2(float x, y);
+record Rectangulo(Vec2 origen, Vec2 esquina);
+
+// Funcion que calcula el ancho de un rectangulo
+float ancho(Rectangulo r) {
+    return r.esquina.x - r.origen.x;
+}
+
+// Funcion que calcula el alto de un rectangulo
+float alto(Rectangulo r) {
+    return r.esquina.y - r.origen.y;
+}
+
+// Funcion que calcula el area
+float area(Rectangulo r) {
+    return ancho(r) * alto(r);
+}
+
+// Sobrecarga: area con parametros escalares
+float area(float a, float b) {
+    return a * b;
+}
+
+// Funcion booleana: comprueba si el rectangulo es cuadrado
+boolean esCuadrado(Rectangulo r) {
+    float w = ancho(r);
+    float h = alto(r);
+    return w == h;
+}
+
+// Funcion void que imprime informacion del rectangulo
+void describir(Rectangulo r) {
+    print(ancho(r));
+    print(alto(r));
+    print(area(r));
+}
+
+// Uso: crear rectangulos y procesarlos
+Rectangulo r1 = new Rectangulo(new Vec2(0.0, 0.0), new Vec2(4.0, 4.0));
+Rectangulo r2 = new Rectangulo(new Vec2(1.0, 1.0), new Vec2(5.0, 3.0));
+
+boolean cuad1 = esCuadrado(r1);
+boolean cuad2 = esCuadrado(r2);
+
+describir(r1);
+describir(r2);
+
+// Acumulador con while
+int i = 0;
+float areaTotal = 0.0;
+float a1 = area(r1);
+float a2 = area(r2);
+
+areaTotal = a1 + a2;
+
+// Control de flujo con resultado de funcion booleana
+if (cuad1) {
+    print(a1);
+} else {
+    print(a2);
+}
+
+// While que suma cuadrados
+int n = 1;
+int sumaC = 0;
+while (n < 5) {
+    sumaC = sumaC + n * n;
+    n = n + 1;
+}
+print(sumaC);
+
+// do-while con break
+int cnt = 0;
+do {
+    cnt = cnt + 1;
+    if (cnt == 3) {
+        break;
+    }
+} while (cnt < 10);
+
+// Sobrecarga de area con escalares
+float aEscalar = area(3.0, 5.0);
+
+print(areaTotal);
+print(cnt);
+print(aEscalar);

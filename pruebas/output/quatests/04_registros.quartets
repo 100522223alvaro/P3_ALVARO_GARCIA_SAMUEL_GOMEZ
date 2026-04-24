@@ -1,0 +1,17 @@
+ASSIGN,3.0,_,px
+ASSIGN,4.0,_,py
+ASSIGN,1.5,_,e1
+ASSIGN,2.5,_,e2
+ASSIGN,1,_,mid
+ASSIGN,9.99,_,mval
+ASSIGN,'X',_,mletra
+ASSIGN,true,_,mactivo
+SUB,10.0,1.5,@T1
+ASSIGN,@T1,_,distX
+SUB,20.0,2.5,@T2
+ASSIGN,@T2,_,distY
+PRINT,px,_,_
+PRINT,e1,_,_
+PRINT,mid,_,_
+PRINT,mletra,_,_
+PRINT,distX,_,_

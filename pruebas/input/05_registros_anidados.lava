@@ -1,0 +1,48 @@
+// Test 05: Registros anidados
+// Cubre: registro con campo de tipo registro; acceso encadenado a.b.c;
+//        asignacion a campo anidado; instanciacion con new anidado;
+//        new de registro como argumento de otro new.
+
+record Vec2(float x, y);
+
+record Segmento(Vec2 inicio, Vec2 fin);
+
+record Triangulo(Vec2 a, Vec2 b, Vec2 c);
+
+// Instanciacion plana de Vec2
+Vec2 v1 = new Vec2(0.0, 0.0);
+Vec2 v2 = new Vec2(3.0, 4.0);
+
+// Instanciacion con new anidado en Segmento
+Segmento seg = new Segmento(new Vec2(1.0, 2.0), new Vec2(5.0, 6.0));
+
+// Acceso encadenado de dos niveles: seg.inicio.x
+float sx = seg.inicio.x;
+float sy = seg.inicio.y;
+float ex = seg.fin.x;
+float ey = seg.fin.y;
+
+// Asignacion a campo anidado
+seg.inicio.x = 10.0;
+seg.fin.y = 99.0;
+
+// Triangulo: registro con tres campos de tipo registro
+Triangulo tri = new Triangulo(new Vec2(0.0, 0.0), new Vec2(4.0, 0.0), new Vec2(2.0, 3.0));
+
+// Acceso encadenado en triangulo
+float ax = tri.a.x;
+float bx = tri.b.x;
+float cy = tri.c.y;
+
+// Calculo usando campos anidados
+float base = tri.b.x - tri.a.x;
+float altura = tri.c.y - tri.a.y;
+
+// Asignacion a campo de triangulo anidado
+tri.c.x = 2.5;
+
+print(sx);
+print(ex);
+print(ax);
+print(base);
+print(altura);

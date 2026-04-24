@@ -1,0 +1,64 @@
+// Test 06: Funciones tipadas y void
+// Cubre: funcion tipada con return; funcion void; parametros multiples;
+//        variables locales en funcion; llamada como expresion y como sentencia;
+//        print dentro de funcion; conversion en parametros (int->float).
+
+// Funcion tipada simple: cuadrado de un entero
+int cuadrado(int n) {
+    return n * n;
+}
+
+// Funcion tipada con multiples parametros
+int suma(int a, int b) {
+    int resultado = a + b;
+    return resultado;
+}
+
+// Funcion float
+float media(float a, float b) {
+    return (a + b) / 2.0;
+}
+
+// Funcion void con print interno
+void mostrar(int v) {
+    print(v);
+}
+
+// Funcion void con multiples params
+void imprimirSuma(int x, int y) {
+    int s = x + y;
+    print(s);
+}
+
+// Funcion con conversion en argumento: acepta float, se le pasa int
+float duplicar(float x) {
+    return x * 2.0;
+}
+
+// Llamada como expresion en declaracion
+int sq = cuadrado(5);
+int total = suma(3, 7);
+float avg = media(4.0, 6.0);
+float dup = duplicar(3);
+
+// Llamada como sentencia
+mostrar(sq);
+imprimirSuma(10, 20);
+
+// Funcion con while interno y return
+int factorial(int n) {
+    int result = 1;
+    int i = 1;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+int fact5 = factorial(5);
+print(fact5);
+
+// Conversiones en llamadas
+float dupChar = duplicar('A');
+print(dupChar);

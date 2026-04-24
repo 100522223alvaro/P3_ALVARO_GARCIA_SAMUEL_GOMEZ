@@ -1,0 +1,43 @@
+// Test 01: Tipos primitivos y todas las formas de literales
+// Cubre: int/float/char/boolean, literales dec/bin/oct/hex/cientifico,
+//        multi-declaracion, declaracion+inicializacion, print de cada tipo.
+// Sin control de flujo ni funciones -> .symbols en formato nombre:tipo,valor
+
+// Enteros con todas las notaciones
+int decimal = 495;
+int binario = 0b111101111;
+int octal = 0757;
+int hexa = 0x1EF;
+
+// Floats: punto decimal y notacion cientifica
+float fPunto = 3.14;
+float fCientifico = 9.87e-2;
+float fCientif2 = 5e5;
+
+// Char: letra ASCII
+char cLetra = 'a';
+char cMayus = 'Z';
+
+// Boolean
+boolean bVerdad = true;
+boolean bFalso = false;
+
+// Multi-declaracion sin inicializar (valores por defecto: 0, 0.0, '', false)
+int x, y, z;
+float p, q;
+char c1, c2;
+boolean b1, b2;
+
+// Imprimir un representante de cada tipo
+print(decimal);
+print(binario);
+print(octal);
+print(hexa);
+print(fPunto);
+print(fCientifico);
+print(cLetra);
+print(bVerdad);
+print(x);
+print(p);
+print(c1);
+print(b1);
